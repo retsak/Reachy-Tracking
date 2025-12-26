@@ -1,0 +1,5 @@
+opencv-python
+fastapi
+uvicorn[standard]
+numpy
+requests

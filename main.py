@@ -16,7 +16,8 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    threading.Thread(target=video_stream_loop, daemon=True).start()
+    # Startup
+    # threading.Thread(target=video_stream_loop, daemon=True).start() # Moved to main
     yield
     # Shutdown - nothing specific needed for now
 
@@ -133,6 +134,17 @@ def video_feed():
 if __name__ == "__main__":
     print("Starting server on port 8082...")
     try:
+    # Initialize robot (and camera) in main thread first for MacOS compatibility
+    robot.connect()
+    
+    # Start loop in background to keep fetching frames
+    # (The camera object is created in main thread, reading from thread is usually ok but 
+    # if it fails we might need to invert control)
+    threading.Thread(target=video_stream_loop, daemon=True).start()
+
+    try:
+        # Disable the automatic loop start in lifespan since we do it manually above
+        # But we need to keep lifespan for cleanup if needed, or we just remove the startup part there.
         uvicorn.run(app, host="0.0.0.0", port=8082)
     except Exception as e:
         print(f"Server crashed: {e}")
