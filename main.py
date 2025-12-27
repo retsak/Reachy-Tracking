@@ -187,7 +187,7 @@ def video_stream_loop():
                     prio_score = 150.0
 
                 elif label == 'face': 
-                    score += 120.0
+                    score += 200.0
                     prio_score = 120.0
                     # E. Context Validation (Realness Check)
                     is_validated = False
