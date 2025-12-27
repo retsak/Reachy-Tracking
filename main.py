@@ -388,12 +388,18 @@ def video_stream_loop():
             d_pitch = err_y * np.deg2rad(FOV_Y) * GAIN_PITCH
             
             # Wiggle
+            # Wiggle
             if SERVER_STATE["wiggle_enabled"]:
-                if not has_greeted_session:
+                # Wiggle if new target (detected=True, prev=False) OR periodically
+                if not target_present or (current_time - last_detection_time > 5.0):
                     threading.Thread(target=robot.wiggle_antennas, daemon=True).start()
-                    # Play Sound (Async handled inside)
-                    robot.play_sound("What Can I Do For You.wav")
-                    has_greeted_session = True
+                    last_detection_time = current_time
+                    
+                    # Play Sound (Only once per session)
+                    if not has_greeted_session:
+                        robot.play_sound("What Can I Do For You.wav")
+                        has_greeted_session = True
+            
             target_present = True
             
             # Move

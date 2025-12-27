@@ -31,6 +31,7 @@ class RobotController:
         self._latest_camera_frame = None
         self._camera_lock = threading.Lock()
         self._camera_thread = None
+        self._reapply_camera_settings = False
         
         self.current_pitch = 0.0
         self.current_yaw = 0.0
@@ -104,27 +105,23 @@ class RobotController:
                 for idx in [0, 1]:
                     if platform.system() == 'Windows':
                         cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+                    elif platform.system() == 'Darwin':
+                         # Force AVFoundation on Mac
+                        cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
                     else:
-                        cap = cv2.VideoCapture(idx) # Auto-detect (AVFoundation on Mac, V4L2 on Linux)
+                        cap = cv2.VideoCapture(idx) 
                         
                     if not cap.isOpened():
-                         cap = cv2.VideoCapture(idx) # Fallback to auto
+                         cap = cv2.VideoCapture(idx) # Fallback
                     
                     if cap.isOpened():
+                        # Force hardware settings BEFORE reading a frame to update driver mode
+                        self._enforce_camera_config(cap)
+
                         ret, _ = cap.read()
                         if ret:
                             self.camera = cap
-                            
-                            # Force hardware settings for better low-light performance
-                            try:
-                                self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                                self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                                self.camera.set(cv2.CAP_PROP_FPS, 15) 
-                                self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-                            except:
-                                pass
-                            
-                            print(f"Camera initialized on index {idx}.")
+                            print(f"Camera initialized on index {idx} (MJPEG 15FPS Requested).")
                             
                             if self._camera_thread is None or not self._camera_thread.is_alive():
                                 self._camera_thread = threading.Thread(target=self._camera_worker, daemon=True)
@@ -141,12 +138,27 @@ class RobotController:
         
         self._is_connected_to_api = api_success
 
-        
+    def _enforce_camera_config(self, cap):
+        """Forces the camera into the correct mode (MJPEG/15FPS) to fix exposure/dimming issues on Mac."""
+        try:
+            # Set MJPEG first to allow higher resolutions/rates without USB bandwidth choke
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, 15) 
+        except Exception as eobj:
+             print(f"Warning: Failed to set camera config: {eobj}")
 
     def _camera_worker(self):
         """Background thread to read frames as fast as possible (latencyless)."""
         while self.camera and self.camera.isOpened():
             try:
+                # 0. Check if we need to enforce settings (e.g. after audio playback reset)
+                if self._reapply_camera_settings:
+                    print("[CAMERA] Re-applying MJPEG/15FPS settings...")
+                    self._enforce_camera_config(self.camera)
+                    self._reapply_camera_settings = False
+                
                 ret, frame = self.camera.read()
                 if ret:
                     # Fix color space issues (Mac often returns BGRA or YUYV)
@@ -495,6 +507,10 @@ class RobotController:
         try:
             # ReachyMini SDK does not take 'host' arg, it uses Zenoh discovery.
             # Using defaults as per user example (localhost_only=True by default).
+            
+            # PRE-EMPTIVE FIX: Force camera settings check immediately before audio starts
+            self._reapply_camera_settings = True
+            
             with SDKReachyMini(log_level="ERROR", media_backend="default") as mini:
                 data, samplerate_in = sf.read(file_path, dtype="float32")
 
@@ -519,6 +535,9 @@ class RobotController:
                 time.sleep(1.0) 
                 mini.media.stop_playing()
                 print(f"[AUDIO] Finished: {filename}")
+                
+            # POST-FIX: Force camera settings check again after audio finishes
+            self._reapply_camera_settings = True
                 
         except Exception as e:
             print(f"[AUDIO] Error playing sound: {e}")
