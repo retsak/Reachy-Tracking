@@ -24,11 +24,12 @@ class RobotController:
         self._camera_lock = threading.Lock()
         self._camera_thread = None
         
-        # Current head state (cache)
         self.current_pitch = 0.0
         self.current_yaw = 0.0
         self.current_roll = 0.0
         self.current_body_yaw = 0.0
+        self.current_antenna_left = 0.0
+        self.current_antenna_right = 0.0
 
     @property
     def is_connected(self):
@@ -274,6 +275,40 @@ class RobotController:
         except:
             pass
             
+    def set_pose(self, head_yaw, head_pitch, head_roll, body_yaw, antenna_left, antenna_right, duration=2.0):
+        """Enqueue absolute pose command for Manual Control."""
+        self.command_queue.put((self._set_pose_sync, (head_yaw, head_pitch, head_roll, body_yaw, antenna_left, antenna_right, duration)))
+    
+    def _set_pose_sync(self, h_yaw, h_pitch, h_roll, b_yaw, a_left, a_right, duration):
+        """Execute absolute move."""
+        if not self.base_url:
+            return 
+            
+        try:
+             # Update internal state
+            self.current_yaw = h_yaw
+            self.current_pitch = h_pitch
+            self.current_roll = h_roll
+            self.current_body_yaw = b_yaw
+            self.current_antenna_left = a_left
+            self.current_antenna_right = a_right
+             
+            with ReachyMini(self.host) as mini:
+                mini.goto_target(
+                    head=create_head_pose(
+                        roll=h_roll,
+                        pitch=h_pitch,
+                        yaw=h_yaw,
+                        x=0, y=0, z=0
+                    ),
+                    body_yaw=b_yaw,
+                    antennas=np.deg2rad([a_left, a_right]),
+                    duration=duration,
+                    method="minjerk"
+                )
+        except Exception as e:
+            print(f"Set Pose Error: {e}")
+
     def update_head_pose(self):
         """Fetch current head pose from API (Stubbed)."""
         pass

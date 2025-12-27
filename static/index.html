@@ -38,6 +38,50 @@
             </div>
         </div>
     </div>
+
+    <!-- Manual Controls Panel (Initially Hidden) -->
+    <div id="manual-controls" class="glass-card" style="display: none; margin-top: 20px;">
+        <div class="header">
+            <h2>Manual Control (Paused)</h2>
+        </div>
+
+        <div class="control-group">
+            <h3>Antennas</h3>
+            <div class="slider-row">
+                <label>Left: <span id="val-ant-l">0</span>°</label>
+                <input type="range" id="ant-l" min="-90" max="90" value="0">
+            </div>
+            <div class="slider-row">
+                <label>Right: <span id="val-ant-r">0</span>°</label>
+                <input type="range" id="ant-r" min="-90" max="90" value="0">
+            </div>
+        </div>
+
+        <div class="control-group">
+            <h3>Head</h3>
+            <div class="slider-row">
+                <label>Yaw (L/R): <span id="val-head-y">0</span>°</label>
+                <input type="range" id="head-y" min="-90" max="90" value="0">
+            </div>
+            <div class="slider-row">
+                <label>Pitch (U/D): <span id="val-head-p">0</span>°</label>
+                <input type="range" id="head-p" min="-45" max="45" value="0">
+            </div>
+            <div class="slider-row">
+                <label>Roll (Tilt): <span id="val-head-r">0</span>°</label>
+                <input type="range" id="head-r" min="-45" max="45" value="0">
+            </div>
+        </div>
+
+        <div class="control-group">
+            <h3>Body</h3>
+            <div class="slider-row">
+                <label>Yaw (Base): <span id="val-body-y">0</span>°</label>
+                <input type="range" id="body-y" min="-150" max="150" value="0">
+            </div>
+        </div>
+    </div>
+    </div>
     <script>
         document.getElementById('reset-btn').addEventListener('click', async () => {
             try {
@@ -56,22 +100,92 @@
                     btn.innerText = "Resume";
                     btn.style.background = "rgba(50, 205, 50, 0.2)";
                     btn.style.borderColor = "rgba(50, 205, 50, 0.4)";
+                    document.getElementById('manual-controls').style.display = 'block';
                 } else {
                     btn.innerText = "Pause";
                     btn.style.background = "rgba(255, 165, 0, 0.2)";
                     btn.style.borderColor = "rgba(255, 165, 0, 0.4)";
+                    document.getElementById('manual-controls').style.display = 'none';
                 }
             } catch (e) {
                 console.error("Pause toggle failed", e);
             }
         });
 
-        // Poll status
+        // Manual Control Logic
+        const sliders = ['ant-l', 'ant-r', 'head-y', 'head-p', 'head-r', 'body-y'];
+        const activeSliders = new Set(); // Track which sliders are being used
+
+        function sendManualControl() {
+            const payload = {
+                antenna_left: parseInt(document.getElementById('ant-l').value),
+                antenna_right: parseInt(document.getElementById('ant-r').value),
+                head_yaw: parseInt(document.getElementById('head-y').value) * (Math.PI / 180),
+                head_pitch: parseInt(document.getElementById('head-p').value) * (Math.PI / 180),
+                head_roll: parseInt(document.getElementById('head-r').value) * (Math.PI / 180),
+                body_yaw: parseInt(document.getElementById('body-y').value) * (Math.PI / 180)
+            };
+
+            fetch('/api/manual_control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            }).catch(console.error);
+        }
+
+        sliders.forEach(id => {
+            const el = document.getElementById(id);
+            const valEl = document.getElementById('val-' + id);
+
+            // Update number display live
+            el.addEventListener('input', () => {
+                valEl.innerText = el.value;
+            });
+
+            // Track interaction state to prevent sync fighting
+            el.addEventListener('mousedown', () => activeSliders.add(id));
+            el.addEventListener('touchstart', () => activeSliders.add(id));
+            el.addEventListener('mouseup', () => activeSliders.delete(id));
+            el.addEventListener('touchend', () => activeSliders.delete(id));
+
+            // Send command on release
+            el.addEventListener('change', () => {
+                activeSliders.delete(id); // Ensure cleared
+                sendManualControl();
+            });
+        });
+
+        // Poll status & SYNC POSES
         setInterval(async () => {
             try {
                 const response = await fetch('/status');
                 const data = await response.json();
                 document.getElementById('status-text').innerText = data.status;
+
+                // Sync Sliders if available and not being dragged
+                if (data.pose) {
+                    const map = {
+                        'ant-l': data.pose.antenna_left,
+                        'ant-r': data.pose.antenna_right,
+                        'head-y': data.pose.head_yaw,
+                        'head-p': data.pose.head_pitch,
+                        'head-r': data.pose.head_roll,
+                        'body-y': data.pose.body_yaw
+                    };
+
+                    sliders.forEach(id => {
+                        if (!activeSliders.has(id)) {
+                            const val = map[id];
+                            if (val !== undefined) {
+                                const el = document.getElementById(id);
+                                const valEl = document.getElementById('val-' + id);
+                                el.value = val;
+                                valEl.innerText = val;
+                            }
+                        }
+                    });
+                }
+
             } catch (e) {
                 console.error("Status fetch failed", e);
             }

@@ -9,29 +9,27 @@ class DetectionEngine:
         cv2.setNumThreads(0)
         
         # Paths to model
-        self.prototxt = 'MobileNetSSD_deploy.prototxt'
-        self.model = 'MobileNetSSD_deploy.caffemodel'
+        self.model_path = 'yolov8n.onnx'
         
-        # Pascal VOC classes
-        self.CLASSES = ["background", "aeroplane", "bicycle", "bird", "boat",
-                        "bottle", "bus", "car", "cat", "chair", "cow", "diningtable",
-                        "dog", "horse", "motorbike", "person", "pottedplant", "sheep",
-                        "sofa", "train", "tvmonitor"]
-        self.CAT_IDX = self.CLASSES.index("cat")
-        self.PERSON_IDX = self.CLASSES.index("person")
-        self.TARGET_IDXS = {self.CAT_IDX, self.PERSON_IDX}
+        # COCO Classes (YOLOv8 default)
+        self.CLASSES = {
+            0: "person",
+            15: "cat"
+        }
         
-        # Load Haar Cascade for Face Detection
+        # Load Haar Cascade for Face Detection (Keep as priority/augment)
         self.face_cascade = None
         try:
-            # Hardcoding path found by `find` command earlier for robustness
-            # venv/lib/python3.9/site-packages/cv2/data/haarcascade_frontalface_default.xml
-            # But let's verify if cv2.data.haarcascades works in main.
-            # safe fallback: using the standard path relative to site-packages if available
-            path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            # Try site-packages path first if known, or standard location
+            if hasattr(cv2, 'data') and hasattr(cv2.data, 'haarcascades'):
+                 path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            else:
+                 path = "haarcascade_frontalface_default.xml" # Local fallback
+
             if not os.path.exists(path):
-                # Fallback to local copy if we ever downloaded it, or try to find it
+                # Fallback to local copy if we ever downloaded it
                 pass 
+            
             self.face_cascade = cv2.CascadeClassifier(path)
             if self.face_cascade.empty():
                 print("Error: Failed to load Haar Cascade xml")
@@ -41,135 +39,121 @@ class DetectionEngine:
             print(f"Error loading face detector: {e}")
 
         self.net = None
-        if os.path.exists(self.prototxt) and os.path.exists(self.model):
+        if os.path.exists(self.model_path):
             try:
-                self.net = cv2.dnn.readNetFromCaffe(self.prototxt, self.model)
+                self.net = cv2.dnn.readNetFromONNX(self.model_path)
+                
+                # Check for CUDA/Metal? OpenCV DNN on Mac usually CPU or OpenCL
                 try:
-                    self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-                    self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
-                    # Run a dummy forward pass to check if CUDA works
-                    dummy_blob = np.random.standard_normal([1, 3, 300, 300]).astype(np.float32)
-                    self.net.setInput(dummy_blob)
-                    self.net.forward()
-                    print("CUDA (GPU) initialized successfully.")
-                except Exception as e:
-                    print(f"CUDA initialization failed ({e}), falling back to CPU.")
                     self.net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
                     self.net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+                except:
+                    pass
                 
-                print("MobileNet SSD loaded successfully.")
+                print("YOLOv8 (ONNX) loaded successfully.")
             except Exception as e:
-                print(f"Failed to load model: {e}")
+                print(f"Failed to load YOLOv8 model: {e}")
         else:
-            print(f"Model files not found: {self.prototxt}, {self.model}")
+            print(f"Model file not found: {self.model_path}")
 
-    def detect(self, frame, min_confidence: float = 0.4):
-        """Detect cats and humans (person) in the frame using MobileNet SSD.
-
-        Returns:
-            (detected, best_box, best_label, best_confidence)
-            - detected: bool
-            - best_box: (x, y, w, h) in pixel coords or None
-            - best_label: str or None ("cat" | "person")
-            - best_confidence: float
+    def detect(self, frame, min_confidence: float = 0.5):
         """
-        if frame is None or self.net is None:
-            return False, None, None, 0.0
+        Detect faces, persons, and cats.
+        
+        Returns:
+            list of dicts: [{'box': (x,y,w,h), 'label': str, 'conf': float}, ...]
+        """
+        results = []
+        
+        if frame is None:
+            return results
 
         (h, w) = frame.shape[:2]
-        # Resize to 300x300 and create blob
-        blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 0.007843, (300, 300), 127.5)
-        
-        self.net.setInput(blob)
-        detections = self.net.forward()
-        
-        detected = False
-        best_box = None
-        best_label = None
-        highest_confidence = 0.0
 
-        # 1. Run Haar Cascade (Face) - Priority!
+        # 1. Haar Face Detection (Priority)
         if self.face_cascade:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             faces = self.face_cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(30, 30),
-                flags=cv2.CASCADE_SCALE_IMAGE
+                gray, scaleFactor=1.1, minNeighbors=8, minSize=(30, 30)
             )
+            for (fx, fy, fw, fh) in faces:
+                results.append({
+                    "box": (int(fx), int(fy), int(fw), int(fh)),
+                    "label": "face",
+                    "conf": 0.5 # Haar is noisy, treat as low confidence unless validated
+                })
+
+        # 2. YOLOv8 Detection
+        if self.net:
+            # Preprocess
+            # YOLOv8 expects 640x640, normalized 0-1
+            # swapRB=True (OpenCV is BGR, Model trained on RGB usually, YOLOv8 handles this but usually swapRB=True)
+            blob = cv2.dnn.blobFromImage(frame, 1/255.0, (640, 640), swapRB=True, crop=False)
+            self.net.setInput(blob)
             
-            # If faces found, pick the largest one
-            if len(faces) > 0:
-                # print(f"DEBUG: Found {len(faces)} faces", flush=True)
-                # Face is usually the best target.
-                # Find largest face
-                largest_area = 0
-                for (fx, fy, fw, fh) in faces:
-                    area = fw * fh
-                    if area > largest_area:
-                        largest_area = area
-                        best_box = (int(fx), int(fy), int(fw), int(fh))
-                        best_label = "face"
-                        highest_confidence = 1.0 # Haar doesn't provide conf, assume high
-                        detected = True
-
-        # 2. Run MobileNet SSD (Person/Cat) - Only if no face or allow override?
-        # Let's run it to see if we find a cat (which might be higher priority than person-body)
-        # But if we found a face, we probably want to prioritize it over "person" body.
-        
-        # Loop over detections
-        for i in range(detections.shape[2]):
-            confidence = detections[0, 0, i, 2]
-            idx = int(detections[0, 0, i, 1])
-
-            # Filter weak detections and ensure it's a target we care about
-            # Filter weak detections and ensure it's a target we care about
-            if confidence > 0.4 and idx in self.TARGET_IDXS:
-                label = self.CLASSES[idx]
+            # Forward pass
+            # Output shape: (1, 84, 8400) -> 4 box + 80 classes
+            outputs = self.net.forward()
+            
+            # Post-Process
+            # Transpose to (8400, 84) to make rows = detections
+            outputs = np.array([cv2.transpose(outputs[0])])
+            rows = outputs.shape[1]
+            
+            boxes = []
+            scores = []
+            class_ids = []
+            
+            # Extract scaling factors
+            x_factor = w / 640
+            y_factor = h / 640
+            
+            data = outputs[0] # (8400, 84)
+            
+            # Efficient Numpy Filtering
+            classes_scores = data[:, 4:]
+            max_scores = np.max(classes_scores, axis=1)
+            argmax_classes = np.argmax(classes_scores, axis=1)
+            
+            mask = max_scores >= min_confidence
+            
+            valid_scores = max_scores[mask]
+            valid_classes = argmax_classes[mask]
+            valid_boxes_data = data[mask, 0:4]
+            
+            for i in range(len(valid_scores)):
+                class_id = valid_classes[i]
                 
-                # Priority Logic: FACE > CAT > PERSON
-                # If we already have a face (confidence=1.0), only override if we find a CAT (maybe?) 
-                # Actually user wants Faces. So Face > All?
-                # Let's say Face > Person. Cat vs Face? "Look for faces and not just the person".
-                # Implies Face > Person. 
-                # Let's treat Face as max priority (1.0 conf).
-                # MobileNet confidence is usually 0.4-0.9.
-                # So if best_label is "face", we likely stick with it unless this detection is ...?
-                
-                # Let's just store candidates and pick best at end?
-                # No, standard loop replacement.
-                
-                is_better = False
-                if not detected:
-                    is_better = True
-                else:
-                    # Current best is present.
-                    if best_label == "face":
-                        # Face wins over person/cat usually for eye contact
-                        is_better = False 
-                    elif label == "cat" and best_label == "person":
-                        is_better = True # Cat > Person
-                    elif confidence > highest_confidence and label == best_label:
-                        is_better = True # Better version of same class
-                
-                if is_better:
-                    detected = True
+                if class_id not in self.CLASSES:
+                    continue
                     
-                    # Compute box if we haven't already
-                    box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-                    (startX, startY, endX, endY) = box.astype("int")
-                    
-                    # Clamp coordinates
-                    startX = max(0, startX)
-                    startY = max(0, startY)
-                    endX = min(w, endX)
-                    endY = min(h, endY)
-                    
-                    width = endX - startX
-                    height = endY - startY
-                    best_box = (startX, startY, width, height)
-                    best_label = label
-                    highest_confidence = confidence
-
-        return detected, best_box, best_label, highest_confidence
+                confidence = valid_scores[i]
+                
+                # Box is cx, cy, w, h in 640 space
+                bx, by, bw, bh = valid_boxes_data[i]
+                
+                # Scale to image
+                left = int((bx - bw/2) * x_factor)
+                top = int((by - bh/2) * y_factor)
+                width = int(bw * x_factor)
+                height = int(bh * y_factor)
+                
+                boxes.append([left, top, width, height])
+                scores.append(float(confidence))
+                class_ids.append(class_id)
+                
+            # NMS
+            if len(boxes) > 0:
+                indices = cv2.dnn.NMSBoxes(boxes, scores, min_confidence, 0.45)
+                
+                # indices is usually flatten list
+                if len(indices) > 0:
+                    for i in indices.flatten():
+                        res = {
+                            "box": tuple(boxes[i]),
+                            "label": self.CLASSES[class_ids[i]],
+                            "conf": scores[i]
+                        }
+                        results.append(res)
+                        
+        return results
