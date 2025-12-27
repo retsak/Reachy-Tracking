@@ -5,6 +5,10 @@ import cv2
 import threading
 import platform
 import queue
+import soundfile as sf
+import scipy.signal
+import os
+from reachy_mini import ReachyMini as SDKReachyMini
 from reachy_sdk_shim import ReachyMini, create_head_pose
 
 class RobotController:
@@ -467,3 +471,54 @@ class RobotController:
                     mini.enable_gravity_compensation()
         except Exception as e:
             print(f"Motor Mode Error: {e}")
+
+    def play_sound(self, filename: str):
+        """Play a wav file by pushing samples to the audio device via SDK."""
+        # Use a background thread to avoid blocking
+        threading.Thread(target=self._play_sound_sync, args=(filename,), daemon=True).start()
+
+    def _play_sound_sync(self, filename: str):
+        if not self.host:
+             print("Cannot play sound: No host known.")
+             return
+
+        # Resolve path
+        base_path = os.path.join(os.getcwd(), "Audio", "Default Voice")
+        file_path = os.path.join(base_path, filename)
+        
+        if not os.path.exists(file_path):
+            print(f"[AUDIO] File not found: {file_path}")
+            return
+            
+        print(f"[AUDIO] Playing: {filename}")
+        
+        try:
+            # ReachyMini SDK does not take 'host' arg, it uses Zenoh discovery.
+            # Using defaults as per user example (localhost_only=True by default).
+            with SDKReachyMini(log_level="ERROR", media_backend="default") as mini:
+                data, samplerate_in = sf.read(file_path, dtype="float32")
+
+                # Resample if needed
+                output_rate = mini.media.get_output_audio_samplerate()
+                if samplerate_in != output_rate:
+                    # Calculate new length
+                    new_len = int(len(data) * (output_rate / samplerate_in))
+                    data = scipy.signal.resample(data, new_len)
+                
+                # Mono conversion
+                if data.ndim > 1:
+                    data = np.mean(data, axis=1)
+
+                mini.media.start_playing()
+                
+                chunk_size = 1024
+                for i in range(0, len(data), chunk_size):
+                    chunk = data[i : i + chunk_size]
+                    mini.media.push_audio_sample(chunk)
+
+                time.sleep(1.0) 
+                mini.media.stop_playing()
+                print(f"[AUDIO] Finished: {filename}")
+                
+        except Exception as e:
+            print(f"[AUDIO] Error playing sound: {e}")

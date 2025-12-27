@@ -57,7 +57,7 @@ TUNING = {
     "detection_interval": 0.20, # Run DNN ~5Hz (YOLOv8n is fast)
     "command_interval": 1.2,    # 1.2s moves
     "stream_fps_cap": 60.0,
-    "min_score_threshold": 280.0,
+    "min_score_threshold": 250.0,
     "recenter_timeout": 2.0
 }
 JPEG_QUALITY = 70
@@ -126,22 +126,27 @@ def video_stream_loop():
     
     # Config
     FOV_X, FOV_Y = 60.0, 45.0
-    GAIN_YAW, GAIN_PITCH = 0.7, 0.7
+    # Increased Pitch Gain from 0.7 to 1.2 to force centering
+    GAIN_YAW, GAIN_PITCH = 0.7, 1.2
     
     last_dnn_ts = 0.0
     last_move_end_time = 0.0
     
-    # Smoothing
-    smooth_x, smooth_y = None, None
-    ALPHA = 0.3 
-    
-    last_command_time = 0.0
+    # State
+    current_target_id = None
     target_present = False
+    has_greeted_session = False
+    last_detection_time = 0.0
+    last_command_time = 0.0
+    last_seen_time = 0.0
+    
     
     # RECENTER_TIMEOUT is now in TUNING
     
+    global idle_start_time, last_enforce_time, idle_pose
     
     while is_running:
+      try:
         loop_start = time.perf_counter()
         current_time = time.time()
         
@@ -384,9 +389,11 @@ def video_stream_loop():
             
             # Wiggle
             if SERVER_STATE["wiggle_enabled"]:
-                if not target_present or (current_time - last_detection_time > 5.0):
+                if not has_greeted_session:
                     threading.Thread(target=robot.wiggle_antennas, daemon=True).start()
-                    last_detection_time = current_time
+                    # Play Sound (Async handled inside)
+                    robot.play_sound("What Can I Do For You.wav")
+                    has_greeted_session = True
             target_present = True
             
             # Move
@@ -451,6 +458,7 @@ def video_stream_loop():
                  current_status = "Waiting for post-move detection..."
              else:
                  target_present = False
+                 target_present = False
         
         # Reset Logic
         if not detected and not head_recentered and (current_time - last_seen_time > TUNING["recenter_timeout"]):
@@ -459,6 +467,7 @@ def video_stream_loop():
                  robot.recenter_head()
                  head_recentered = True
                  current_target_id = None
+                 has_greeted_session = False
 
         # 6. Annotation (Draw ALL objects)
         annotated = frame.copy()
@@ -488,7 +497,14 @@ def video_stream_loop():
         # FPS Sleep
         elapsed = time.perf_counter() - loop_start
         sleep_s = max(0.0, (1.0 / TUNING["stream_fps_cap"]) - elapsed)
+        sleep_s = max(0.0, (1.0 / TUNING["stream_fps_cap"]) - elapsed)
         time.sleep(sleep_s)
+        
+      except Exception as e:
+           print(f"[ERROR] Video Loop Crash: {e}")
+           import traceback
+           traceback.print_exc()
+           time.sleep(1.0) # Prevent tight loop crash
 
 def generate_mjpeg():
     while is_running:
