@@ -21,4 +21,4 @@ if rc.is_connected:
     print("Testing wiggle...")
     rc.wiggle_antennas()
 
-print("Done.")
+print("Done....")
