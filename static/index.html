@@ -104,6 +104,41 @@
             </div>
         </div>
 
+        <!-- System Tuning Panel -->
+        <div id="tuning-panel" class="glass-card" style="margin-top: 20px; width: 100%;">
+            <div class="header">
+                <h2>System Tuning</h2>
+            </div>
+            <div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center;">
+                <div class="control-group" style="flex: 1; min-width: 200px;">
+                    <label>Detection Interval (s): <span id="val-det-int">0.05</span></label>
+                    <input type="number" id="det-int" step="0.01" min="0.01" max="1.0" value="0.05"
+                        style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); color: white;">
+                </div>
+                <div class="control-group" style="flex: 1; min-width: 200px;">
+                    <label>Command Interval (s): <span id="val-cmd-int">1.2</span></label>
+                    <input type="number" id="cmd-int" step="0.1" min="0.1" max="5.0" value="1.2"
+                        style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); color: white;">
+                </div>
+                <div class="control-group" style="flex: 1; min-width: 200px;">
+                    <label>Stream Max FPS: <span id="val-fps-cap">60</span></label>
+                    <input type="number" id="fps-cap" step="1" min="1" max="60" value="60"
+                        style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); color: white;">
+                </div>
+                <div class="control-group" style="flex: 1; min-width: 200px;">
+                    <label>Min Score: <span id="val-min-score">180</span></label>
+                    <input type="number" id="min-score" step="10" min="0" max="500" value="180"
+                        style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); color: white;">
+                </div>
+                <div class="control-group" style="flex: 0 0 100px; display: flex; align-items: flex-end;">
+                    <button id="update-tuning-btn" class="status-pill"
+                        style="cursor: pointer; width: 100%; background: rgba(59, 130, 246, 0.4); border: 1px solid rgba(59, 130, 246, 0.6);">
+                        Update
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Candidates Table -->
         <div class="glass-card" style="margin-top: 20px; width: 100%;">
             <div class="header">
@@ -164,6 +199,51 @@
                 // State update happens in polling
             } catch (e) {
                 console.error("Wiggle toggle failed", e);
+            }
+        });
+
+        // Tuning Logic
+        async function fetchTuning() {
+            try {
+                const res = await fetch('/api/tuning');
+                const data = await res.json();
+                document.getElementById('det-int').value = data.detection_interval;
+                document.getElementById('val-det-int').innerText = data.detection_interval;
+
+                document.getElementById('cmd-int').value = data.command_interval;
+                document.getElementById('val-cmd-int').innerText = data.command_interval;
+
+                document.getElementById('fps-cap').value = data.stream_fps_cap;
+                document.getElementById('val-fps-cap').innerText = data.stream_fps_cap;
+
+                document.getElementById('min-score').value = data.min_score_threshold;
+                document.getElementById('val-min-score').innerText = data.min_score_threshold;
+            } catch (e) {
+                console.error("Fetch tuning failed", e);
+            }
+        }
+
+        // Initial Fetch
+        fetchTuning();
+
+        document.getElementById('update-tuning-btn').addEventListener('click', async () => {
+            const payload = {
+                detection_interval: parseFloat(document.getElementById('det-int').value),
+                command_interval: parseFloat(document.getElementById('cmd-int').value),
+                stream_fps_cap: parseFloat(document.getElementById('fps-cap').value),
+                min_score_threshold: parseFloat(document.getElementById('min-score').value)
+            };
+
+            try {
+                await fetch('/api/tuning', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                alert("Tuning Updated!");
+                fetchTuning(); // Refresh to confirm
+            } catch (e) {
+                console.error("Update tuning failed", e);
             }
         });
 

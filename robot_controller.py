@@ -273,7 +273,7 @@ class RobotController:
                 
                 mini.goto_target(
                     head=create_head_pose(
-                        roll=self.current_roll,
+                        roll=0.0,
                         pitch=target_pitch,
                         yaw=target_head_yaw,
                         x=0, y=0, z=0
@@ -287,6 +287,7 @@ class RobotController:
                 # This fixes the "snapping" bug by remembering where we told it to go
                 self.current_body_yaw = target_body_yaw
                 self.current_pitch = target_pitch
+                self.current_roll = 0.0
                 # self.current_yaw keeps track of head relative to body? 
                 # In this logic current_yaw is treated as head position.
                 self.current_yaw = target_head_yaw

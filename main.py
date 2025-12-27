@@ -49,9 +49,12 @@ is_running = True
 last_detection_time = 0
 
 # Tuning
-DETECTION_INTERVAL_S = 0.20 # Run DNN ~5Hz (YOLOv8n is fast)
-COMMAND_INTERVAL_S = 1.2    # 1.2s moves
-STREAM_FPS_CAP = 20.0
+TUNING = {
+    "detection_interval": 0.20, # Run DNN ~5Hz (YOLOv8n is fast)
+    "command_interval": 1.2,    # 1.2s moves
+    "stream_fps_cap": 60.0,
+    "min_score_threshold": 280.0
+}
 JPEG_QUALITY = 70
 
 def _create_tracker():
@@ -91,7 +94,7 @@ def detection_loop():
             latest_dnn["detections"] = results
             latest_dnn["ts"] = now
 
-        time.sleep(DETECTION_INTERVAL_S)
+        time.sleep(TUNING["detection_interval"])
 
 def connection_monitor_loop():
     global current_status
@@ -263,7 +266,7 @@ def video_stream_loop():
             # Requirement: New Score > Current Score + 50 (unless current is lost)
             
             # 1. Check Threshold for Best Candidate
-            if best_score < 180.0: # Lowered slightly from 200 to allow for removed stickiness bonus
+            if best_score < TUNING["min_score_threshold"]:
                  best_id = None
             
             # 2. Apply Hysteresis
@@ -380,7 +383,7 @@ def video_stream_loop():
             target_present = True
             
             # Move
-            if current_time - last_command_time >= COMMAND_INTERVAL_S:
+            if current_time - last_command_time >= TUNING["command_interval"]:
                 if not SERVER_STATE["paused"]:
                      MIN_MOVE = np.deg2rad(5.0)
                      if abs(d_yaw) > MIN_MOVE or abs(d_pitch) > MIN_MOVE:
@@ -451,7 +454,7 @@ def video_stream_loop():
             
         # FPS Sleep
         elapsed = time.perf_counter() - loop_start
-        sleep_s = max(0.0, (1.0 / STREAM_FPS_CAP) - elapsed)
+        sleep_s = max(0.0, (1.0 / TUNING["stream_fps_cap"]) - elapsed)
         time.sleep(sleep_s)
 
 def generate_mjpeg():
@@ -517,11 +520,21 @@ class MotorModeRequest(BaseModel):
     mode: str # stiff, limp, soft
 
 @app.post("/api/motor_mode")
-def set_motor_mode(req: MotorModeRequest):
-    if not SERVER_STATE["paused"]:
-        return {"status": "error", "message": "System must be paused."}
-    robot.set_motor_mode(req.mode)
-    return {"status": "ok"}
+async def set_motor_mode(cmd: dict):
+    mode = cmd.get("mode", "stiff")
+    robot.set_motor_mode(mode)
+    return {"status": "ok", "mode": mode}
+
+@app.get("/api/tuning")
+async def get_tuning():
+    return TUNING
+
+@app.post("/api/tuning")
+async def set_tuning(new_tuning: dict):
+    for k, v in new_tuning.items():
+        if k in TUNING:
+            TUNING[k] = float(v)
+    return TUNING
 
 @app.post("/api/manual_control")
 def manual_control(req: ManualControlRequest):
