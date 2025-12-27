@@ -1,10 +1,11 @@
-
 import numpy as np
 import time
 import requests
 import cv2
 import threading
 import platform
+import queue
+from reachy_sdk_shim import ReachyMini, create_head_pose
 
 class RobotController:
     def __init__(self, host='localhost'):
@@ -12,7 +13,16 @@ class RobotController:
         self.base_url = None
         self.camera = None
         self._is_connected_to_api = False
-        self._is_moving = False
+        
+        # Command Queue for serialized execution
+        self.command_queue = queue.Queue()
+        self._worker_thread = threading.Thread(target=self._command_worker, daemon=True)
+        self._worker_thread.start()
+        
+        # Camera State
+        self._latest_camera_frame = None
+        self._camera_lock = threading.Lock()
+        self._camera_thread = None
         
         # Current head state (cache)
         self.current_pitch = 0.0
@@ -38,7 +48,8 @@ class RobotController:
         if self.is_connected and self.camera is not None and self.camera.isOpened():
             return
 
-        possible_hosts = ['localhost', '127.0.0.1', 'reachy.local', self.host]
+        # Prioritize 127.0.0.1 to avoid localhost resolution issues on Mac
+        possible_hosts = ['127.0.0.1', 'localhost', 'reachy.local', self.host]
         # Deduplicate
         hosts_to_try = []
         for h in possible_hosts:
@@ -50,22 +61,29 @@ class RobotController:
         for host in hosts_to_try:
             url = f"http://{host}:8000"
             try:
-                if not silent:
-                    print(f"Attempting to connect to Reachy API at {url}...")
-                
                 # Health check or Status
                 resp = requests.get(f"{url}/api/daemon/status", timeout=2)
                 if resp.status_code == 200:
-                    print(f"Successfully connected to API at {url}!")
+                    print(f"Successfully connected to API at {url}!", flush=True)
                     self.host = host
                     self.base_url = url
                     api_success = True
+                    
+                    # Try to force motors ON (compliance false)
+                    try:
+                         # Shotgun turn on
+                         requests.post(f"{url}/api/turn_on", json={}, timeout=1)
+                         requests.post(f"{url}/api/compliant", json={"compliant": False}, timeout=1)
+                    except:
+                        pass
+                        
                     # Initial state fetch
                     self.update_head_pose()
                     break
             except Exception as e:
-                if not silent:
-                    print(f"Failed to connect to API at {host}: {e}")
+                # if not silent:
+                #     print(f"Failed to connect to API at {host}: {e}")
+                pass
         
         if not api_success:
             if not silent:
@@ -87,7 +105,21 @@ class RobotController:
                         ret, _ = cap.read()
                         if ret:
                             self.camera = cap
+                            
+                            # Force hardware settings for better low-light performance
+                            try:
+                                self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                                self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                                self.camera.set(cv2.CAP_PROP_FPS, 15) 
+                                self.camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+                            except:
+                                pass
+                            
                             print(f"Camera initialized on index {idx}.")
+                            
+                            if self._camera_thread is None or not self._camera_thread.is_alive():
+                                self._camera_thread = threading.Thread(target=self._camera_worker, daemon=True)
+                                self._camera_thread.start()
                             break
                         else:
                             cap.release()
@@ -100,54 +132,69 @@ class RobotController:
         
         self._is_connected_to_api = api_success
 
-    def get_latest_frame(self):
-        if self.camera:
+        
+
+    def _camera_worker(self):
+        """Background thread to read frames as fast as possible (latencyless)."""
+        while self.camera and self.camera.isOpened():
             try:
                 ret, frame = self.camera.read()
                 if ret:
-                    return frame
-            except:
+                    # Fix color space issues (Mac often returns BGRA or YUYV)
+                    if frame.ndim == 3:
+                        if frame.shape[2] == 4:
+                            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+                        elif frame.shape[2] == 2:
+                            frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_YUY2)
+                    
+                    with self._camera_lock:
+                        self._latest_camera_frame = frame
+                else:
+                    time.sleep(0.1)
+            except Exception as e:
+                print(f"Camera worker exception: {e}")
+                time.sleep(0.1)
+
+    def get_latest_frame(self):
+        with self._camera_lock:
+            if self._latest_camera_frame is None:
+                return None
+            return self._latest_camera_frame.copy()
+            
+    def _command_worker(self):
+        """Background thread to process movement commands sequentially."""
+        while True:
+            try:
+                func, args = self.command_queue.get()
+                try:
+                    func(*args)
+                except Exception as e:
+                    print(f"Error in command worker: {e}", flush=True)
+                finally:
+                    self.command_queue.task_done()
+            except Exception:
                 pass
-        return None
 
-    def update_head_pose(self):
-        if not self.base_url:
-            return
-        try:
-            resp = requests.get(f"{self.base_url}/api/state/full", params={"with_head_pose": "true", "with_body_yaw": "true"}, timeout=1)
-            if resp.status_code == 200:
-                data = resp.json()
-                pose = data.get("head_pose", {})
-                if pose:
-                    self.current_pitch = pose.get("pitch", 0.0)
-                    self.current_roll = pose.get("roll", 0.0)
-                    self.current_yaw = pose.get("yaw", 0.0)
+    def move_head(self, d_yaw, d_pitch, duration=0.5):
+        """Enqueue a relative head movement command."""
+        # Empty queue if it's getting backed up to ensure fresh commands
+        if self.command_queue.qsize() > 2:
+            try:
+                while not self.command_queue.empty():
+                    self.command_queue.get_nowait()
+                    self.command_queue.task_done()
+            except queue.Empty:
+                pass
                 
-                self.current_body_yaw = data.get("body_yaw", 0.0)
-                if self.current_body_yaw is None: 
-                    self.current_body_yaw = 0.0
-        except:
-            pass
+        self.command_queue.put((self._move_head_sync, (d_yaw, d_pitch, duration)))
 
-    def move_head(self, d_yaw, d_pitch):
-        """
-        Non-blocking wrapper for move_head.
-        """
-        if self._is_moving:
-            return
-        
-        self._is_moving = True
-        threading.Thread(target=self._move_head_sync, args=(d_yaw, d_pitch)).start()
-
-    def _move_head_sync(self, d_yaw, d_pitch):
+    def _move_head_sync(self, d_yaw, d_pitch, duration=0.5):
         """
         Move head relative to current position.
         Also moves body if head turns too far.
         """
         if not self.base_url:
-            self._is_moving = False
-            return
-
+            self.current_yaw += d_yaw
         try:
             # Update current first
             self.update_head_pose()
@@ -155,99 +202,135 @@ class RobotController:
             target_head_yaw = self.current_yaw + d_yaw
             target_pitch = self.current_pitch + d_pitch
             target_body_yaw = self.current_body_yaw
-    
-            # Body Follows Head Logic (Proportional Washout)
-            # Smoothly transfer head rotation to body rotation to keep head centered
-            # This allows the robot to "lean into" the turn continuously
-            WASHOUT_GAIN = 0.5 
+
+            # Zone-Based Tracking Logic (40% - 20% - 40%)
+            # FOV_X is approx 60 degrees.
+            # Center zone (20%) is +/- 10% of FOV = +/- 6 degrees = +/- 0.1 radians.
             
-            transfer_yaw = target_head_yaw * WASHOUT_GAIN
-            target_body_yaw += transfer_yaw
-            target_head_yaw -= transfer_yaw
+            ZONE_THRESHOLD = np.deg2rad(6.0) # +/- 6 degrees
             
+            new_body_yaw = target_body_yaw
+            new_head_yaw = target_head_yaw # Default: head stays relative to body
+            
+            # Use 'd_yaw' (the error) to determine zone, rather than absolute position
+            # d_yaw is the offset from center.
+            
+            if abs(d_yaw) > ZONE_THRESHOLD:
+                # SIDE ZONES (40% Left or Right) -> Move BODY
+                # Eliminate the error using the body.
+                
+                # We want to change the body angle by 'd_yaw' amount to center it.
+                # If d_yaw is Negative (Target Right), we want to turn Right (Negative).
+                # So we ADD d_yaw.
+                new_body_yaw = target_body_yaw + d_yaw
+                
+                # Fix for "Head stays in same position" (Counter-Rotation)
+                # If SDK Head Yaw is Global (Base Frame), setting it to 0 keeps it at Base Front.
+                # To make it turn WITH the body, we must set Head Yaw to the SAME angle as Body Yaw.
+                # Body moves to 'new_body_yaw'. Head should look at 'new_body_yaw'.
+                new_head_yaw = new_body_yaw 
+                
+            else:
+                # CENTER ZONE (20%) -> Move HEAD
+                # Fine tuning. Body stays put.
+                target_head_yaw = self.current_yaw + d_yaw # Standard head update
+                new_head_yaw = target_head_yaw
+                new_body_yaw = target_body_yaw
+            
+            # Apply changes
+            target_body_yaw = new_body_yaw
+            target_head_yaw = new_head_yaw
+
             # Clamp limits
             target_head_yaw = np.clip(target_head_yaw, -1.0, 1.0)     # Head limits
-            target_pitch = np.clip(target_pitch, -0.8, 0.2) # Pitch limits [-0.8 (Up), 0.2 (Down)]
-            
-            # We don't clip body yaw strictly, but let's assume +/- 3.0 rad (~170 deg) is safe 
-            target_body_yaw = np.clip(target_body_yaw, -3.0, 3.0)
+            target_pitch = np.clip(target_pitch, -0.8, 0.2)
+            target_body_yaw = np.clip(target_body_yaw, -2.5, 2.5)
     
-            payload = {
-                "head_pose": {
-                    "roll": self.current_roll,
-                    "pitch": target_pitch,
-                    "yaw": target_head_yaw,
-                    "x": 0.0,
-                    "y": 0.0,
-                    "z": 0.0 
-                },
-                "body_yaw": target_body_yaw,
-                "duration": 0.2, # Fast update
-                "interpolation": "linear"
-            }
-            
-            requests.post(f"{self.base_url}/api/move/goto", json=payload, timeout=0.5)
+            # USE NEW SDK SHIM
+            with ReachyMini(self.host) as mini:
+                # DEBUG LOGGING (User Requested)
+                print(f"[DEBUG] Zone Logic: d_yaw_err={d_yaw:.3f} | Zone={'SIDE' if abs(d_yaw) > ZONE_THRESHOLD else 'CENTER'}", flush=True)
+                print(f"[DEBUG] Target: HeadYaw={target_head_yaw:.3f} BodyYaw={target_body_yaw:.3f} Pitch={target_pitch:.3f}", flush=True)
+                
+                mini.goto_target(
+                    head=create_head_pose(
+                        roll=self.current_roll,
+                        pitch=target_pitch,
+                        yaw=target_head_yaw,
+                        x=0, y=0, z=0
+                    ),
+                    body_yaw=target_body_yaw,
+                    duration=duration,
+                    method="minjerk"
+                )
+                
+                # UPDATE STATE (Dead Reckoning)
+                # This fixes the "snapping" bug by remembering where we told it to go
+                self.current_body_yaw = target_body_yaw
+                self.current_pitch = target_pitch
+                # self.current_yaw keeps track of head relative to body? 
+                # In this logic current_yaw is treated as head position.
+                self.current_yaw = target_head_yaw
         except:
             pass
-        finally:
-            self._is_moving = False
+            
+    def update_head_pose(self):
+        """Fetch current head pose from API (Stubbed)."""
+        pass
 
     def recenter_head(self):
-        if self._is_moving:
-            return
-        self._is_moving = True
-        threading.Thread(target=self._recenter_head_sync).start()
+        self.command_queue.put((self._recenter_head_sync, ()))
 
     def _recenter_head_sync(self):
         """Moves head to default center position (0, 0, 0)."""
+        # Always reset internal state to 0
+        self.current_pitch = 0.0
+        self.current_yaw = 0.0
+        self.current_roll = 0.0
+        self.current_body_yaw = 0.0
+
         if not self.base_url:
-            self._is_moving = False
             return
         
-        payload = {
-            "head_pose": {
-                "roll": 0.0,
-                "pitch": 0.0,
-                "yaw": 0.0,
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.0
-            },
-            "body_yaw": 0.0,
-            "duration": 1.0, # Smooth return
-            "interpolation": "minjerk"
-        }
         try:
-            requests.post(f"{self.base_url}/api/move/goto", json=payload, timeout=1)
+            with ReachyMini(self.host) as mini:
+                mini.goto_target(
+                    head=create_head_pose(roll=0, pitch=0, yaw=0, x=0, y=0, z=0),
+                    body_yaw=0.0,
+                    antennas=np.zeros(2), 
+                    duration=3.0, # Slow reset
+                    method="minjerk"
+                )
         except:
             pass
-        finally:
-            self._is_moving = False
 
     def wiggle_antennas(self):
+        self.command_queue.put((self._wiggle_antennas_sync, ()))
+
+    def _wiggle_antennas_sync(self):
+        """Wiggles antennas to show happiness/detection."""
         if not self.base_url:
             return
-        
+            
         def move_antennas(l_deg, r_deg, duration):
-            l_rad = np.deg2rad(l_deg)
-            r_rad = np.deg2rad(r_deg)
-            payload = {
-                "antennas": [l_rad, r_rad],
-                "duration": duration,
-                "interpolation": "minjerk"
-            }
             try:
-                requests.post(f"{self.base_url}/api/move/goto", json=payload, timeout=1)
-            except:
-                pass
+                with ReachyMini(self.host) as mini:
+                    mini.goto_target(
+                        antennas=np.deg2rad([l_deg, r_deg]),
+                        duration=duration,
+                        method="minjerk"
+                    )
+            except Exception as e:
+                print(f"DEBUG: Wiggle failed: {e}", flush=True)
 
         try:
-            for _ in range(3):
-                move_antennas(30, -30, 0.2)
-                time.sleep(0.2)
-                move_antennas(-10, 10, 0.2)
-                time.sleep(0.2)
-            move_antennas(0, 0, 0.5)
+            # Slower, gentler wiggle
+            for _ in range(2):
+                move_antennas(30, -30, 0.4)
+                time.sleep(0.4)
+                move_antennas(-10, 10, 0.4)
+                time.sleep(0.4)
+            move_antennas(0, 0, 0.6)
         except:
             pass
 

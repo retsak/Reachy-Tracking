@@ -1,21 +1,82 @@
-
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Reachy Cat Tracker</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐱</text></svg>">
 </head>
+
 <body>
-    <div class="container">
-        <h1>🐱 Reachy Cat Tracker 🤖</h1>
-        <div class="video-container">
-            <img src="/video_feed" alt="Reachy Video Feed" id="video-feed">
-        </div>
-        <div class="status-bar">
-            <p>Status: <span id="status-text">Monitoring...</span></p>
+    <div class="app-container">
+        <div class="glass-card">
+            <div class="header">
+                <h1>Reachy Cat Tracker</h1>
+                <p class="subtitle">Autonomous AI Sentry</p>
+            </div>
+
+            <div class="video-wrapper">
+                <img src="/video_feed" alt="Reachy Video Feed" id="video-feed">
+            </div>
+
+            <div class="status-bar">
+                <div class="status-pill">
+                    <span class="status-dot"></span>
+                    <span id="status-text">System Active</span>
+                </div>
+                <button id="reset-btn" class="status-pill"
+                    style="cursor: pointer; margin-left: 10px; background: rgba(255, 50, 50, 0.2); border: 1px solid rgba(255, 50, 50, 0.4);">
+                    Reset Robot
+                </button>
+                <button id="pause-btn" class="status-pill"
+                    style="cursor: pointer; margin-left: 10px; background: rgba(255, 165, 0, 0.2); border: 1px solid rgba(255, 165, 0, 0.4);">
+                    Pause
+                </button>
+            </div>
         </div>
     </div>
+    <script>
+        document.getElementById('reset-btn').addEventListener('click', async () => {
+            try {
+                await fetch('/api/reset', { method: 'POST' });
+            } catch (e) {
+                console.error("Reset failed", e);
+            }
+        });
+
+        document.getElementById('pause-btn').addEventListener('click', async () => {
+            try {
+                const res = await fetch('/api/toggle_pause', { method: 'POST' });
+                const data = await res.json();
+                const btn = document.getElementById('pause-btn');
+                if (data.paused) {
+                    btn.innerText = "Resume";
+                    btn.style.background = "rgba(50, 205, 50, 0.2)";
+                    btn.style.borderColor = "rgba(50, 205, 50, 0.4)";
+                } else {
+                    btn.innerText = "Pause";
+                    btn.style.background = "rgba(255, 165, 0, 0.2)";
+                    btn.style.borderColor = "rgba(255, 165, 0, 0.4)";
+                }
+            } catch (e) {
+                console.error("Pause toggle failed", e);
+            }
+        });
+
+        // Poll status
+        setInterval(async () => {
+            try {
+                const response = await fetch('/status');
+                const data = await response.json();
+                document.getElementById('status-text').innerText = data.status;
+            } catch (e) {
+                console.error("Status fetch failed", e);
+            }
+        }, 500);
+    </script>
 </body>
+
 </html>
