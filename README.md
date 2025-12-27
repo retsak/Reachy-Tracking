@@ -1,6 +1,6 @@
 # Reachy Tracking & Control
 
-An autonomous tracking and control system for the Reachy robot, designed to detect and follow objects (faces, people, cats) using a hybrid tracking approach (YOLOv8 + Object Tracking). It provides a web-based dashboard for monitoring and manual control.
+An autonomous tracking and control system for the Reachy robot, designed to detect and follow objects (faces, people, cats) using a hybrid tracking approach (YOLOv8 + Object Tracking + Sound). It provides a web-based dashboard for monitoring and manual control.
 
 ## Features
 
@@ -10,6 +10,8 @@ An autonomous tracking and control system for the Reachy robot, designed to dete
     -   **Haar Cascades**: For fast face detection.
     -   **Visual Tracking (KCF/CSRT)**: Locks onto targets for smooth following.
     -   **Ghosting Prevention**: Automatically resets tracking memory on robot movement.
+-   **Audio Interaction**:
+    -   **Greeting**: Plays a greeting sound ("What can I do for you?") upon initial detection. Reset logic ensures it only plays once per engagement session.
 -   **Web Dashboard**:
     -   **Live Video Feed**: Annotated with detection boxes and status.
     -   **Manual Control**: Full control over Head (Pitch/Roll/Yaw), Body (Yaw), and Antennas via sliders.
@@ -22,26 +24,35 @@ An autonomous tracking and control system for the Reachy robot, designed to dete
 
 ## Prerequisites
 
--   Python 3.9+
+-   **Python 3.10+** (Python 3.11 recommended).
 -   Access to a Reachy robot (real or simulated) running the Reachy SDK server.
--   `yolov8n.onnx` model (automatically downloaded if using Ultralytics, or placed in root).
+-   `yolov8n.onnx` model (automatically downloaded if using Ultralytics).
+-   **Note for macOS Users**: System audio (CoreAudio) is used for playback.
 
 ## Installation
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/yourusername/Reachy-Tracking.git
+    git clone https://github.com/retsak/Reachy-Tracking.git
     cd Reachy-Tracking
     ```
 
-2.  **Create a Virtual Environment:**
+2.  **Install Python 3.11 (if needed) & Create Virtual Environment:**
+    
+    *Using Homebrew (macOS)*:
     ```bash
-    python3 -m venv .venv
-    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+    brew install python@3.11
+    /opt/homebrew/bin/python3.11 -m venv .venv
+    ```
+    
+    *Standard*:
+    ```bash
+    python3.11 -m venv .venv
     ```
 
-3.  **Install Dependencies:**
+3.  **Activate and Install Dependencies:**
     ```bash
+    source .venv/bin/activate
     pip install -r requirements.txt
     ```
 
@@ -51,8 +62,9 @@ An autonomous tracking and control system for the Reachy robot, designed to dete
     Make sure the Reachy robot (or simulation) is running and its API is accessible (default: `localhost:8000`).
 
 2.  **Run the Tracking Server:**
+    **Important:** Ensure you are using the Virtual Environment created above.
     ```bash
-    python3 main.py
+    .venv/bin/python main.py
     ```
 
 3.  **Access the Dashboard:**
