@@ -2,11 +2,15 @@
 import cv2
 import threading
 import time
+import os
+import signal
+import sys
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 import numpy as np
+import webbrowser
 
 from robot_controller import RobotController
 from detection_engine import DetectionEngine
@@ -607,8 +611,23 @@ def manual_control(req: ManualControlRequest):
     )
     return {"status": "ok"}
 
+@app.post("/api/shutdown")
+def shutdown():
+    global is_running
+    is_running = False # Stop loops
+    
+    # Schedule kill
+    def kill_proc():
+        time.sleep(1.0)
+        os.kill(os.getpid(), signal.SIGINT)
+        
+    threading.Thread(target=kill_proc, daemon=True).start()
+    return {"status": "shutting_down", "message": "System powering off..."}
+
 if __name__ == "__main__":
     print("Starting server on port 8082...")
+    print("Use http://localhost:8082/ to access the web interface.")
+    webbrowser.open("http://localhost:8082/")    
     robot.connect()
     threading.Thread(target=detection_loop, daemon=True).start()
     threading.Thread(target=connection_monitor_loop, daemon=True).start()

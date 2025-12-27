@@ -44,6 +44,10 @@
                         style="cursor: pointer; margin-left: 10px; background: rgba(147, 51, 234, 0.2); border: 1px solid rgba(147, 51, 234, 0.4);">
                         Wiggle: On
                     </button>
+                    <button id="power-btn" class="status-pill"
+                        style="cursor: pointer; margin-left: 10px; background: rgba(220, 38, 38, 0.2); border: 1px solid rgba(220, 38, 38, 0.4);">
+                        Power Off
+                    </button>
                 </div>
             </div>
 
@@ -204,6 +208,19 @@
                 // State update happens in polling
             } catch (e) {
                 console.error("Wiggle toggle failed", e);
+            }
+        });
+
+        document.getElementById('power-btn').addEventListener('click', async () => {
+            if (confirm("Are you sure you want to shut down the system?")) {
+                try {
+                    await fetch('/api/shutdown', { method: 'POST' });
+                    alert("System shutting down...");
+                    window.close(); // Try to close tab
+                    document.body.innerHTML = "<h1 style='color:white;text-align:center;margin-top:20%;'>System Offline</h1>";
+                } catch (e) {
+                    console.error("Shutdown failed", e);
+                }
             }
         });
 
