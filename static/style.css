@@ -1,20 +1,28 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
 
 :root {
-    --bg-gradient-start: #0f172a;
-    --bg-gradient-end: #1e293b;
-    --card-bg: rgba(30, 41, 59, 0.7);
-    --accent-color: #3b82f6;
-    --text-primary: #f8fafc;
-    --text-secondary: #94a3b8;
-    --success-color: #10b981;
-    --danger-color: #ef4444;
-    --glow-color: rgba(59, 130, 246, 0.5);
+    /* Reachy Dashboard Theme */
+    --bg-color: #121212;
+    --card-bg: #1E1E1E;
+    --card-border: #333333;
+
+    --accent-color: #F5A623;
+    /* Orange */
+    --accent-glow: rgba(245, 166, 35, 0.3);
+
+    --text-primary: #FFFFFF;
+    --text-secondary: #A0A0A0;
+
+    --success-color: #30D158;
+    /* Green for Ready/Active */
+    --danger-color: #FF453A;
+
+    --input-bg: rgba(0, 0, 0, 0.3);
 }
 
 body {
     font-family: 'Inter', sans-serif;
-    background: linear-gradient(135deg, var(--bg-gradient-start), var(--bg-gradient-end));
+    background-color: var(--bg-color);
     color: var(--text-primary);
     margin: 0;
     min-height: 100vh;
@@ -33,68 +41,61 @@ body {
     align-items: center;
 }
 
+/* Replaces the old glass-card with a solid "Panel" look */
 .glass-card {
     background: var(--card-bg);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-    border-radius: 24px;
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    /* Slightly tighter radius */
     padding: 2rem;
     text-align: center;
-    transition: transform 0.3s ease;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    transition: transform 0.2s ease, border-color 0.2s ease;
 }
-
-/* .glass-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.5), 0 0 20px var(--glow-color);
-} */
 
 .header {
     margin-bottom: 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 
 h1 {
     font-weight: 800;
-    font-size: 2.5rem;
+    font-size: 2.2rem;
     margin: 0;
-    background: linear-gradient(to right, #fff, #94a3b8);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    color: var(--text-primary);
+    letter-spacing: -0.5px;
 }
 
 .subtitle {
     color: var(--text-secondary);
-    font-size: 1rem;
+    font-size: 0.95rem;
     margin-top: 0.5rem;
+    font-weight: 500;
 }
 
 .video-wrapper {
     position: relative;
-    padding: 10px;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 16px;
-    box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.5);
-    /* Dynamic resizing: Max 60% of viewport height, preserve aspect ratio */
-    height: 60vh;
+    padding: 1px;
+    background: var(--card-border);
+    border-radius: 12px;
+    min-height: 400px;
     display: flex;
     justify-content: center;
     align-items: center;
-    width: auto;
-    aspect-ratio: 4/3;
+    width: 100%;
+    overflow: hidden;
+    background-color: #000;
 }
 
 #video-feed {
     width: auto;
     height: 100%;
-    /* Allow full width usage up to container limit */
     max-width: 100%;
     max-height: 100%;
-    border-radius: 12px;
+    border-radius: 11px;
     display: block;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
     object-fit: contain;
 }
 
@@ -104,29 +105,54 @@ h1 {
     justify-content: center;
     align-items: center;
     gap: 1rem;
+    flex-wrap: wrap;
 }
 
+/* Status Pill - Matches "Start" buttons */
 .status-pill {
-    background: rgba(16, 185, 129, 0.2);
-    border: 1px solid rgba(16, 185, 129, 0.4);
-    color: #34d399;
-    padding: 0.5rem 1rem;
-    border-radius: 9999px;
+    background: transparent;
+    border: 1px solid var(--accent-color);
+    color: var(--accent-color);
+    padding: 0.6rem 1.2rem;
+    border-radius: 8px;
+    /* Button shape */
     font-weight: 600;
     font-size: 0.9rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    justify-content: center;
+    gap: 0.6rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.status-pill:hover {
+    background: rgba(245, 166, 35, 0.1);
+    box-shadow: 0 0 10px var(--accent-glow);
+}
+
+/* Variant: Success (Green) */
+/* Using inline styles in HTML mostly, but generic class here */
+.status-pill.success {
+    border-color: var(--success-color);
+    color: var(--success-color);
+}
+
+.status-pill.success:hover {
+    background: rgba(48, 209, 88, 0.1);
+    box-shadow: 0 0 10px rgba(48, 209, 88, 0.3);
 }
 
 .status-dot {
-    width: 8px;
-    height: 8px;
-    background-color: #34d399;
+    width: 10px;
+    height: 10px;
+    background-color: currentColor;
     border-radius: 50%;
-    box-shadow: 0 0 8px #34d399;
+    box-shadow: 0 0 8px currentColor;
+    /* animation: pulse 2s infinite; */
+    /* Clean look preferred? Keeping pulse for "alive" feel */
     animation: pulse 2s infinite;
 }
 
@@ -137,8 +163,8 @@ h1 {
     }
 
     50% {
-        transform: scale(1.5);
-        opacity: 0.5;
+        transform: scale(1.2);
+        opacity: 0.7;
     }
 
     100% {
@@ -147,47 +173,6 @@ h1 {
     }
 }
 
-/* Control Buttons */
-.control-btn {
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: var(--text-secondary);
-    padding: 0.5rem 1rem;
-    border-radius: 12px;
-    font-size: 0.9rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.control-btn:hover {
-    background: rgba(255, 255, 255, 0.2);
-    color: var(--text-primary);
-}
-
-.control-btn.active {
-    background: rgba(59, 130, 246, 0.2);
-    border-color: var(--accent-color);
-    color: var(--accent-color);
-    box-shadow: 0 0 15px var(--glow-color);
-}
-
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    h1 {
-        font-size: 1.8rem;
-    }
-
-    .glass-card {
-        padding: 1.5rem;
-    }
-
-    #video-feed {
-        aspect-ratio: 4/3;
-    }
-}
 
 /* Manual Control Panel */
 #manual-controls {
@@ -201,43 +186,42 @@ h1 {
 .control-group {
     margin-bottom: 20px;
     padding: 20px;
-    background: rgba(0, 0, 0, 0.3);
+    background: #252525;
+    /* Slightly lighter than card-bg */
+    border: 1px solid var(--card-border);
     border-radius: 12px;
 }
 
 .control-group h3 {
     margin-top: 0;
     margin-bottom: 15px;
-    color: #94a3b8;
-    font-size: 0.85em;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
     text-transform: uppercase;
     letter-spacing: 1.5px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-    padding-bottom: 5px;
+    border-bottom: 1px solid var(--card-border);
+    padding-bottom: 8px;
 }
 
 .slider-row {
     display: flex;
     flex-direction: column;
-    /* Vertical Layout */
-    margin-bottom: 20px;
+    margin-bottom: 15px;
 }
 
 .slider-row label {
     display: flex;
     justify-content: space-between;
-    /* Spread name and value */
     width: 100%;
     margin-bottom: 8px;
-    color: #e2e8f0;
+    color: var(--text-primary);
     font-weight: 500;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
 }
 
 .slider-row label span {
     font-family: 'Courier New', monospace;
-    color: #fbbf24;
-    /* Amber-400 */
+    color: var(--accent-color);
     font-weight: 700;
 }
 
@@ -249,24 +233,91 @@ input[type=range] {
 
 input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none;
-    height: 18px;
-    width: 18px;
+    height: 16px;
+    width: 16px;
     border-radius: 50%;
-    background: #fbbf24;
+    background: var(--accent-color);
     cursor: pointer;
-    margin-top: -7px;
-    box-shadow: 0 0 10px rgba(251, 191, 36, 0.4);
-    border: 2px solid rgba(255, 255, 255, 0.9);
+    margin-top: -6px;
+    box-shadow: 0 0 10px var(--accent-glow);
+    border: 2px solid #fff;
+    transition: transform 0.1s;
+}
+
+input[type=range]::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
 }
 
 input[type=range]::-webkit-slider-runnable-track {
     width: 100%;
     height: 4px;
     cursor: pointer;
-    background: rgba(255, 255, 255, 0.1);
+    background: #444;
     border-radius: 2px;
 }
 
 input[type=range]:focus {
     outline: none;
+}
+
+/* Glass Table -> Simple Clean Table */
+.glass-table {
+    width: 100%;
+    border-collapse: collapse;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.glass-table th {
+    text-align: left;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--card-border);
+    color: var(--text-secondary);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.8rem;
+}
+
+.glass-table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glass-table tr:last-child td {
+    border-bottom: none;
+}
+
+.glass-table tr:hover td {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+/* Number inputs in Tuning */
+input[type=number] {
+    background: var(--input-bg) !important;
+    border: 1px solid var(--card-border) !important;
+    color: white !important;
+    font-family: 'Inter', sans-serif;
+}
+
+input[type=number]:focus {
+    border-color: var(--accent-color) !important;
+    outline: none;
+}
+
+/* Scrollbar (Webkit) */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-color);
+}
+
+::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #555;
 }

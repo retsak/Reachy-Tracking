@@ -130,6 +130,11 @@
                     <input type="number" id="min-score" step="10" min="0" max="500" value="180"
                         style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); color: white;">
                 </div>
+                <div class="control-group" style="flex: 1; min-width: 200px;">
+                    <label>Cache Limit (s): <span id="val-rec-timeout">2.0</span></label>
+                    <input type="number" id="rec-timeout" step="0.5" min="0.5" max="10.0" value="2.0"
+                        style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); color: white;">
+                </div>
                 <div class="control-group" style="flex: 0 0 100px; display: flex; align-items: flex-end;">
                     <button id="update-tuning-btn" class="status-pill"
                         style="cursor: pointer; width: 100%; background: rgba(59, 130, 246, 0.4); border: 1px solid rgba(59, 130, 246, 0.6);">
@@ -218,6 +223,9 @@
 
                 document.getElementById('min-score').value = data.min_score_threshold;
                 document.getElementById('val-min-score').innerText = data.min_score_threshold;
+
+                document.getElementById('rec-timeout').value = data.recenter_timeout;
+                document.getElementById('val-rec-timeout').innerText = data.recenter_timeout;
             } catch (e) {
                 console.error("Fetch tuning failed", e);
             }
@@ -231,7 +239,8 @@
                 detection_interval: parseFloat(document.getElementById('det-int').value),
                 command_interval: parseFloat(document.getElementById('cmd-int').value),
                 stream_fps_cap: parseFloat(document.getElementById('fps-cap').value),
-                min_score_threshold: parseFloat(document.getElementById('min-score').value)
+                min_score_threshold: parseFloat(document.getElementById('min-score').value),
+                recenter_timeout: parseFloat(document.getElementById('rec-timeout').value)
             };
 
             try {
@@ -282,7 +291,7 @@
 
             // Update number display live
             el.addEventListener('input', () => {
-                valEl.innerText = el.value;
+                valEl.innerText = parseFloat(el.value).toFixed(2);
             });
 
             // Track interaction state to prevent sync fighting
@@ -361,13 +370,15 @@
 
                 // Sync Sliders if available and not being dragged
                 if (data.pose) {
+                    const toDeg = (rad) => (rad * 180 / Math.PI);
+
                     const map = {
-                        'ant-l': data.pose.antenna_left,
-                        'ant-r': data.pose.antenna_right,
-                        'head-y': data.pose.head_yaw,
-                        'head-p': data.pose.head_pitch,
-                        'head-r': data.pose.head_roll,
-                        'body-y': data.pose.body_yaw
+                        'ant-l': data.pose.antenna_left, // Already Deg
+                        'ant-r': data.pose.antenna_right, // Already Deg
+                        'head-y': toDeg(data.pose.head_yaw),
+                        'head-p': toDeg(data.pose.head_pitch),
+                        'head-r': toDeg(data.pose.head_roll),
+                        'body-y': toDeg(data.pose.body_yaw)
                     };
 
                     sliders.forEach(id => {
@@ -377,7 +388,7 @@
                                 const el = document.getElementById(id);
                                 const valEl = document.getElementById('val-' + id);
                                 el.value = val;
-                                valEl.innerText = val;
+                                valEl.innerText = val.toFixed(2);
                             }
                         }
                     });

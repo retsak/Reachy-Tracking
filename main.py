@@ -47,13 +47,18 @@ latest_dnn = {"detected": False, "detections": [], "ts": 0.0}
 latest_dnn_lock = threading.Lock()
 is_running = True
 last_detection_time = 0
+# Idle State
+idle_start_time = 0.0
+last_enforce_time = 0.0
+idle_pose = None
 
 # Tuning
 TUNING = {
     "detection_interval": 0.20, # Run DNN ~5Hz (YOLOv8n is fast)
     "command_interval": 1.2,    # 1.2s moves
     "stream_fps_cap": 60.0,
-    "min_score_threshold": 280.0
+    "min_score_threshold": 280.0,
+    "recenter_timeout": 2.0
 }
 JPEG_QUALITY = 70
 
@@ -76,7 +81,7 @@ def _create_tracker():
 
 def detection_loop():
     """Run YOLOv8 in background."""
-    global latest_camera_frame
+    global latest_camera_frame, idle_start_time, last_enforce_time, idle_pose
     while is_running:
         with latest_camera_lock:
             frame = None if latest_camera_frame is None else latest_camera_frame.copy()
@@ -132,7 +137,9 @@ def video_stream_loop():
     
     last_command_time = 0.0
     target_present = False
-    RECENTER_TIMEOUT = 2.0
+    
+    # RECENTER_TIMEOUT is now in TUNING
+    
     
     while is_running:
         loop_start = time.perf_counter()
@@ -409,9 +416,35 @@ def video_stream_loop():
                          # We are moving the camera. Old centroids are now meaningless ghosts.
                          # Wipe memory to force fresh acquisition after move.
                          mot_tracker = SimpleTracker()
-                         trackable_objects = {}
                          current_target_id = None 
                          head_recentered = True # Treat as a "reset" of sorts to prevent instant re-centering
+                         
+                         # Reset Idle State
+                         idle_start_time = 0.0
+                         idle_pose = None
+
+                     else:
+                         # IDLE STATE (Target is close enough)
+                         
+                         if idle_start_time == 0.0:
+                             idle_start_time = current_time
+                             last_enforce_time = current_time
+                             # Capture current pose to hold
+                             idle_pose = {
+                                 "head_yaw": robot.current_yaw,
+                                 "head_pitch": robot.current_pitch,
+                                 "head_roll": 0.0, 
+                                 "body_yaw": robot.current_body_yaw,
+                                 "antenna_left": robot.current_antenna_left,
+                                 "antenna_right": robot.current_antenna_right,
+                                 "duration": 1.0
+                             }
+                        
+                         # Enforce every 10s
+                         if current_time - last_enforce_time > 10.0 and idle_pose:
+                              print(f"[IDLE] Enforcing position on Target ID {current_target_id}")
+                              robot.set_pose(**idle_pose)
+                              last_enforce_time = current_time
         else:
              # Lost or Waiting for Fresh Data
              if not is_fresh_detection and current_target_id is not None:
@@ -420,7 +453,7 @@ def video_stream_loop():
                  target_present = False
         
         # Reset Logic
-        if not detected and not head_recentered and (current_time - last_seen_time > RECENTER_TIMEOUT):
+        if not detected and not head_recentered and (current_time - last_seen_time > TUNING["recenter_timeout"]):
              if not SERVER_STATE["paused"]:
                  current_status = "Target Lost. Scanning..."
                  robot.recenter_head()
