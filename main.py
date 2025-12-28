@@ -5,6 +5,7 @@ import time
 import os
 import signal
 import sys
+import logging
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +16,14 @@ import webbrowser
 from robot_controller import RobotController
 from detection_engine import DetectionEngine
 from simple_tracker import SimpleTracker
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] [%(levelname)s] %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 try:
     cv2.setUseOptimized(True)
@@ -39,6 +48,8 @@ SERVER_STATE = {
     "wiggle_enabled": True
 } # Default Paused, Wiggle ON
 LATEST_CANDIDATES = []
+current_target_id = None
+trackable_objects = {}
 
 # State
 latest_frame = None
@@ -56,7 +67,12 @@ idle_start_time = 0.0
 last_enforce_time = 0.0
 idle_pose = None
 
-# Tuning
+# Tuning Parameters with Valid Ranges
+# - detection_interval: 0.01-1.0 seconds (DNN execution frequency)
+# - command_interval: 0.1-5.0 seconds (robot move frequency)
+# - stream_fps_cap: 1-60 FPS (video stream frame rate limit)
+# - min_score_threshold: 0-500 (minimum candidate score for tracking)
+# - recenter_timeout: 0.5-10.0 seconds (idle recenter delay)
 TUNING = {
     "detection_interval": 0.20, # Run DNN ~5Hz (YOLOv8n is fast)
     "command_interval": 1.2,    # 1.2s moves
@@ -117,13 +133,13 @@ def connection_monitor_loop():
 
 def video_stream_loop():
     global latest_frame, last_detection_time, current_status, latest_camera_frame
+    global current_target_id, trackable_objects
     
     last_seen_time = time.time()
     head_recentered = False
     
     # Tracking Logic
     mot_tracker = SimpleTracker(max_disappeared=5, max_distance=100)
-    current_target_id = None # ID of the object we are focusing on
     
     # Fast Visual Tracker (KCF) for the chosen target
     visual_tracker = None
@@ -137,7 +153,6 @@ def video_stream_loop():
     last_move_end_time = 0.0
     
     # State
-    current_target_id = None
     target_present = False
     has_greeted_session = False
     last_detection_time = 0.0
@@ -301,12 +316,9 @@ def video_stream_loop():
             # Switch Target logic...
             if best_id is not None:
                 if best_id != current_target_id:
-                     print(f"*** SWITCH TARGET: {current_target_id} -> {best_id} ***\nCandidates: {', '.join(debug_candidates)}\n*************************")
+                     logger.info(f"SWITCH TARGET: {current_target_id} -> {best_id} | Candidates: {', '.join(debug_candidates)}")
                      current_target_id = best_id
                      tgt_box = trackable_objects[best_id]['data'][0]
-                     visual_tracker = _create_tracker()
-                     if visual_tracker:
-                         visual_tracker.init(frame, tuple(tgt_box))
                      visual_tracker = _create_tracker()
                      if visual_tracker:
                          visual_tracker.init(frame, tuple(tgt_box))
@@ -413,9 +425,7 @@ def video_stream_loop():
                      if abs(d_yaw) > MIN_MOVE or abs(d_pitch) > MIN_MOVE:
                          duration = 1.0
                          # Log the move verification
-                         ts_str = time.strftime("%H:%M:%S", time.localtime(current_time))
-                         ms_str = f"{(current_time % 1):.3f}"[1:]
-                         print(f"[{ts_str}{ms_str}] [MOVE] Validated Target ID {current_target_id} ({target_label}). Adjusting Head.")
+                         logger.info(f"[MOVE] Validated Target ID {current_target_id} ({target_label}). Adjusting Head.")
                          robot.move_head(d_yaw, d_pitch, duration=duration)
                          last_command_time = current_time
                          
@@ -507,13 +517,10 @@ def video_stream_loop():
         # FPS Sleep
         elapsed = time.perf_counter() - loop_start
         sleep_s = max(0.0, (1.0 / TUNING["stream_fps_cap"]) - elapsed)
-        sleep_s = max(0.0, (1.0 / TUNING["stream_fps_cap"]) - elapsed)
         time.sleep(sleep_s)
         
       except Exception as e:
-           print(f"[ERROR] Video Loop Crash: {e}")
-           import traceback
-           traceback.print_exc()
+           logger.error(f"Video Loop Crash: {e}", exc_info=True)
            time.sleep(1.0) # Prevent tight loop crash
 
 def generate_mjpeg():
@@ -535,10 +542,22 @@ def video_feed():
 
 @app.get("/status")
 def get_status():
+    # Gather current target metadata
+    target_info = None
+    if current_target_id is not None and current_target_id in trackable_objects:
+        obj = trackable_objects[current_target_id]
+        target_info = {
+            "id": current_target_id,
+            "label": obj.get('label', 'unknown'),
+            "score": next((c['score'] for c in LATEST_CANDIDATES if c['id'] == current_target_id), 0)
+        }
+    
     return {
         "status": current_status,
         "paused": SERVER_STATE["paused"],
         "wiggle_enabled": SERVER_STATE["wiggle_enabled"],
+        "current_target_id": current_target_id,
+        "current_target": target_info,
         "candidates": LATEST_CANDIDATES,
         "pose": {
              "head_yaw": robot.current_yaw, # We might need to expose these from robot controller
@@ -590,10 +609,46 @@ async def get_tuning():
 
 @app.post("/api/tuning")
 async def set_tuning(new_tuning: dict):
+    # Define valid ranges for each parameter
+    RANGES = {
+        "detection_interval": (0.01, 1.0),
+        "command_interval": (0.1, 5.0),
+        "stream_fps_cap": (1.0, 60.0),
+        "min_score_threshold": (0.0, 500.0),
+        "recenter_timeout": (0.5, 10.0)
+    }
+    
+    updated = {}
+    errors = []
+    
     for k, v in new_tuning.items():
-        if k in TUNING:
-            TUNING[k] = float(v)
-    return TUNING
+        if k in TUNING and k in RANGES:
+            try:
+                val = float(v)
+                min_val, max_val = RANGES[k]
+                
+                # Clamp to valid range
+                if val < min_val:
+                    errors.append(f"{k}: {val} clamped to minimum {min_val}")
+                    val = min_val
+                elif val > max_val:
+                    errors.append(f"{k}: {val} clamped to maximum {max_val}")
+                    val = max_val
+                
+                TUNING[k] = val
+                updated[k] = val
+            except (ValueError, TypeError) as e:
+                errors.append(f"{k}: invalid value '{v}' (must be numeric)")
+        elif k not in TUNING:
+            errors.append(f"{k}: unknown parameter (ignored)")
+    
+    response = {"tuning": TUNING, "updated": updated}
+    if errors:
+        response["warnings"] = errors
+        logger.warning(f"Tuning validation warnings: {errors}")
+    
+    logger.info(f"Tuning updated: {updated}")
+    return response
 
 @app.post("/api/manual_control")
 def manual_control(req: ManualControlRequest):
@@ -625,8 +680,8 @@ def shutdown():
     return {"status": "shutting_down", "message": "System powering off..."}
 
 if __name__ == "__main__":
-    print("Starting server on port 8082...")
-    print("Use http://localhost:8082/ to access the web interface.")
+    logger.info("Starting server on port 8082...")
+    logger.info("Use http://localhost:8082/ to access the web interface.")
     webbrowser.open("http://localhost:8082/")    
     robot.connect()
     threading.Thread(target=detection_loop, daemon=True).start()

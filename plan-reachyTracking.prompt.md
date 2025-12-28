@@ -1,0 +1,61 @@
+Plan: Brainstorm And Prioritize Additions
+
+TL;DR: Propose a curated, high‑impact set of ideas tailored to this codebase across features (target selection UI, patrol mode, speech reactions, persistence), performance (GPU/DirectML, process‑isolated DNN, adaptive rates), robustness (thread health, locking, camera reconnect, input validation), UX (status clarity, live logs, manual control polish), docs (Windows steps, tuning), testing/CI (mock shim, tracker/tests), and DevX (version pins, env config, logging, WebSockets). Validate constraints, rank into Now/Next/Later, define quick spikes, and align on a short roadmap.
+
+Goals
+- Map constraints (GPU/OS/network), align scope from requirements and camera/robot assumptions.
+- Draft concrete, scoped ideas with code touchpoints across backend (FastAPI + workers), detection, robot shim, and dashboard.
+- Prioritize into Now/Next/Later by impact vs. effort; define success metrics.
+- Produce a short, actionable roadmap and test plan for top picks.
+
+Steps
+1) Confirm constraints and goals: GPU availability (CUDA/DirectML), OS targets (Windows/macOS), network exposure (localhost vs. LAN), robot daemon contract.
+2) Draft and group concrete ideas with file/symbol touchpoints, focusing on:
+   - Backend: routes in main server (status, tuning, control), worker orchestration, shared state.
+   - Detection: ONNX/YOLO pipeline, post‑proc, adaptive cadence.
+   - Robot control: shim calls, gating, safety clamps, command queueing.
+   - UI: dashboard status, controls, tuning panel, candidate list and interactions.
+3) Prioritize ideas (impact/effort) → Now (quick wins, 1–3 days), Next (1–2 weeks), Later (2–4+ weeks).
+4) Define success criteria and 0.5–1 day spikes for top picks (demoable with measurable outcomes: FPS, latency, stability).
+5) Produce a lightweight roadmap and minimal test plan (unit + smoke) for selected items; stage tasks for implementation.
+
+Further Considerations
+- Acceleration strategy: CUDA vs. DirectML vs. CPU‑only; choose based on target hardware.
+- Exposure model: local‑only vs. add simple auth if remote access required.
+- Persistence: JSON config and/or .env to persist tuning and UI prefs.
+
+Deliverables
+- Curated idea list with file/symbol touchpoints and rationale.
+- Prioritized Now/Next/Later backlog with rough effort and risk notes.
+- Success metrics for top items (e.g., DNN FPS, end‑to‑end latency, recovery time).
+- Mini test plan for top items (unit boundaries, mocks, smoke checks).
+
+
+Initial Idea Categories (for ranking)
+- Features: Target selection UI (click‑to‑track), patrol/auto‑scan mode, event‑based speech reactions, tuning persistence.
+- Voice & AI (New): 
+    - **Audio Pipeline**: Use `MediaManager` (from `reachy_mini` SDK) for microphone access (`start_recording`, `get_audio_sample`). [Ref: test_audio.py](https://github.com/pollen-robotics/reachy_mini/blob/develop/tests/test_audio.py)
+    - **STT**: Local OpenAI Whisper (e.g., `faster-whisper`) for speech-to-text.
+    - **LLM**: Local Qwen3 1.7B (lightweight, "Thinking Mode" capable) for reasoning and response generation. [Ref: Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B)
+    - **TTS**: Local Piper TTS (fast, low-latency, Python bindings) for voice response. Voice: [Amy (Medium)](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/amy/medium).
+    - **Flow**: Wake word/VAD -> Record -> Whisper -> Qwen3 -> Piper TTS -> Play Audio.
+- Performance: GPU/DirectML or onnxruntime EPs, process‑isolated DNN, adaptive rate/resolution.
+- Robustness: Thread health/restarts, stronger locking around shared state, camera reconnect/backoff, input validation on tuning/control.
+- UX: Status enrichment (current target, age, FPS), live logs panel, manual control nudge/sensitivity, fix candidate highlighting.
+- Docs: Windows setup, robot daemon prerequisites/ports, tuning guide, troubleshooting.
+- Testing/CI: Mocked robot shim, tracker/detection post‑proc tests, control gating tests, lint/type checks.
+- DevX: Version pins, env config, structured logging, WebSocket telemetry for status/logs.
+
+Open Questions
+- Hardware: Is a CUDA/DML‑capable GPU available on target machines?
+- Network: Should the dashboard remain localhost only, or support LAN with auth?
+- Persistence: Preferred mechanism (JSON, .env, or API‑backed storage)?
+- Control: Confirm units and safety limits for head/body/antennas in the robot daemon.
+- Target priorities: Person vs. face precedence when both are present?
+- Voice/AI: Preferred runtime for Qwen3 (Transformers vs. Llama.cpp)?
+
+Next Actions
+- Validate constraints with stakeholders.
+- Rank the categories and pick 2–3 Now items for immediate spikes.
+- Outline acceptance criteria and quick test plans for chosen items.
+

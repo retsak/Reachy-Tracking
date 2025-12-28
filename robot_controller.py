@@ -36,6 +36,7 @@ class RobotController:
         self._camera_lock = threading.Lock()
         self._camera_thread = None
         self._reapply_camera_settings = False
+        self._pause_camera_reads = False
         
         self.current_pitch = 0.0
         self.current_yaw = 0.0
@@ -192,7 +193,12 @@ class RobotController:
         """Background thread to read frames as fast as possible (latencyless)."""
         while self.camera and self.camera.isOpened():
             try:
-                # 0. Check if we need to enforce settings (e.g. after audio playback reset)
+                # 0. Check if camera reads are paused (e.g., during audio playback)
+                if self._pause_camera_reads:
+                    time.sleep(0.05)
+                    continue
+                
+                # 1. Check if we need to enforce settings (e.g. after audio playback reset)
                 if self._reapply_camera_settings:
                     print("[CAMERA] Re-applying MJPEG/15FPS settings...")
                     self._enforce_camera_config(self.camera)
@@ -212,7 +218,7 @@ class RobotController:
                 else:
                     time.sleep(0.1)
             except Exception as e:
-                print(f"Camera worker exception: {e}")
+                print(f"[CAMERA] Read error: {e}")
                 time.sleep(0.1)
 
     def get_latest_frame(self):
@@ -543,12 +549,13 @@ class RobotController:
             
         print(f"[AUDIO] Playing: {filename}")
         
+        # Pause camera reads to prevent OpenCV/SDK resource conflicts
+        self._pause_camera_reads = True
+        time.sleep(0.1)  # Give camera worker time to finish current read
+        
         try:
             # ReachyMini SDK does not take 'host' arg, it uses Zenoh discovery.
             # Using defaults as per user example (localhost_only=True by default).
-            
-            # PRE-EMPTIVE FIX: Force camera settings check immediately before audio starts
-            self._reapply_camera_settings = True
             
             with SDKReachyMini(log_level="ERROR", media_backend="default") as mini:
                 data, samplerate_in = sf.read(file_path, dtype="float32")
@@ -575,8 +582,13 @@ class RobotController:
                 mini.media.stop_playing()
                 print(f"[AUDIO] Finished: {filename}")
                 
-            # POST-FIX: Force camera settings check again after audio finishes
-            self._reapply_camera_settings = True
-                
         except Exception as e:
             print(f"[AUDIO] Error playing sound: {e}")
+        finally:
+            # Always resume camera reads and re-apply settings
+            self._pause_camera_reads = False
+            self._reapply_camera_settings = True
+            time.sleep(0.1)  # Brief delay for settings to apply
+            self._pause_camera_reads = False
+            self._reapply_camera_settings = True
+            time.sleep(0.1)  # Brief delay for settings to apply
