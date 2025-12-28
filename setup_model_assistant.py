@@ -27,7 +27,7 @@ def download_yolo_model():
     
     print("Downloading YOLOv8n ONNX model...")
     try:
-        url = "https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.onnx"
+        url = "https://huggingface.co/Kalray/yolov8/resolve/main/yolov8n.onnx"
         urllib.request.urlretrieve(url, str(YOLO_MODEL))
         print("✓ YOLOv8 model downloaded successfully")
         return True
