@@ -7,6 +7,7 @@ import threading
 import queue
 import time
 import logging
+import re
 import numpy as np
 import soundfile as sf
 from typing import Optional, Callable
@@ -62,9 +63,10 @@ class VoiceAssistant:
         
         # Conversation context
         self.conversation_history = []
-        self.system_prompt = """You are a friendly and helpful robot assistant named Reachy. 
-You are equipped with vision and can track people and objects. You are part of a surveillance 
-and interaction system. Keep responses concise (1-2 sentences) and natural. Be helpful and engaging."""
+        self.system_prompt = """You are a friendly and helpful robot assistant named Reachy.
+    Respond in plain English with 1–2 short sentences.
+    Do not output code, lists, or markup/tokens. Speak naturally.
+    Avoid repeating words or characters; no placeholders or gibberish."""
         
         # Callbacks
         self.on_speech_detected: Optional[Callable[[str], None]] = None
@@ -100,10 +102,10 @@ and interaction system. Keep responses concise (1-2 sentences) and natural. Be h
                 from transformers import AutoTokenizer, AutoModelForCausalLM
                 import torch
                 
-                # Public, lightweight chat models suitable for CPU
+                # Prefer the smaller Qwen 0.5B for speed on CPU
                 fallbacks = [
-                    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
                     "Qwen/Qwen2.5-0.5B-Instruct",
+                    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
                 ]
 
                 last_error = None
@@ -112,14 +114,39 @@ and interaction system. Keep responses concise (1-2 sentences) and natural. Be h
                     try:
                         logger.info(f"Loading LLM model: {model_name}...")
                         self._llm_tokenizer = AutoTokenizer.from_pretrained(
-                            model_name, trust_remote_code=True, cache_dir=str(self.llm_dir)
+                            model_name, trust_remote_code=True, cache_dir=str(self.llm_dir), use_fast=True
                         )
                         self._llm_model = AutoModelForCausalLM.from_pretrained(
                             model_name,
-                            dtype=torch.float32,
+                            torch_dtype=torch.float32,
+                            device_map="cpu",
+                            low_cpu_mem_usage=False,
                             trust_remote_code=True,
                             cache_dir=str(self.llm_dir)
                         )
+                        # Ensure model is on CPU explicitly
+                        self._llm_model.to("cpu")
+                        # Inference-only mode
+                        self._llm_model.eval()
+
+                        # CPU threading: use all available cores
+                        try:
+                            import os
+                            num_threads = os.cpu_count() or 4
+                            torch.set_num_threads(num_threads)
+                        except Exception:
+                            pass
+
+                        # Dynamic quantization for Linear layers to speed CPU
+                        try:
+                            import torch.nn as nn
+                            from torch.ao.quantization import quantize_dynamic
+                            self._llm_model = quantize_dynamic(
+                                self._llm_model, {nn.Linear}, dtype=torch.qint8
+                            )
+                            logger.info("Applied dynamic quantization (qint8) to Linear layers.")
+                        except Exception as qe:
+                            logger.warning(f"Quantization skipped: {qe}")
                         selected = model_name
                         logger.info(f"LLM loaded successfully: {model_name}")
                         self.model_info["llm"] = {"name": model_name, "dir": str(self.llm_dir)}
@@ -358,13 +385,17 @@ and interaction system. Keep responses concise (1-2 sentences) and natural. Be h
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
-                    max_new_tokens=100,
-                    temperature=0.7,
-                    top_p=0.9,
-                    do_sample=True
+                    max_new_tokens=60,
+                    do_sample=False,
+                    use_cache=True,
+                    eos_token_id=tokenizer.eos_token_id,
+                    pad_token_id=tokenizer.eos_token_id,
+                    no_repeat_ngram_size=3,
+                    repetition_penalty=1.15,
                 )
             
-            response = tokenizer.decode(outputs[0][len(inputs.input_ids[0]):], skip_special_tokens=True)
+            raw = tokenizer.decode(outputs[0][len(inputs.input_ids[0]):], skip_special_tokens=True)
+            response = self._postprocess_response(self._extract_assistant_content(raw))
             
             # Add to history
             self.conversation_history.append({"role": "assistant", "content": response})
@@ -375,6 +406,65 @@ and interaction system. Keep responses concise (1-2 sentences) and natural. Be h
             logger.error(f"Response generation error: {e}", exc_info=True)
             return "I'm sorry, I encountered an error processing your request."
     
+    def _strip_role_prefix(self, text: str) -> str:
+        """Remove leading role prefixes like 'Assistant:' from model outputs."""
+        if not text:
+            return text
+        s = text.strip()
+        # Remove common chat role tokens
+        s = s.replace("<|assistant|>", "").replace("<|im_start|>assistant", "").replace("<|im_end|>", "")
+        s = s.replace("### Assistant:", "")
+        # Regex to drop leading 'Assistant' label with punctuation
+        s = re.sub(r"^(assistant|Assistant|ASSISTANT)\s*[:：\-—\.]*\s*", "", s)
+        # Fallback removal for simple prefixes
+        for pref in ("Assistant.", "assistant.", "Assistant:", "assistant:"):
+            if s.startswith(pref):
+                s = s[len(pref):].lstrip()
+        return s.strip()
+
+    def _extract_assistant_content(self, raw: str) -> str:
+        """Extract only the assistant message body from raw decoded text.
+
+        Handles templates like `<|im_start|>assistant ... <|im_end|>` and
+        falls back to splitting on common role prefixes.
+        """
+        if not raw:
+            return raw
+
+        # Primary: capture between assistant start and end tags
+        m = re.search(r"<\|im_start\|>\s*assistant\s*(.*?)(?:<\|im_end\|>|$)", raw, flags=re.IGNORECASE | re.DOTALL)
+        if m:
+            body = m.group(1)
+            return self._strip_role_prefix(body)
+
+        # Fallback: after 'Assistant:' prefix up to next role marker
+        m2 = re.search(r"(?:^|\n)(?:assistant|Assistant|ASSISTANT)\s*:\s*(.*)", raw, flags=re.DOTALL)
+        if m2:
+            body = m2.group(1)
+            body = re.split(r"\n(?:User|System|assistant)\s*:\s*|<\|im_start\|>|<\|im_end\|>", body)[0]
+            return body.strip()
+
+        # Otherwise, just strip known tokens and return
+        return self._strip_role_prefix(raw)
+
+    def _postprocess_response(self, text: str) -> str:
+        """Clean generated text: remove invalid chars, collapse repeats, and fallback."""
+        if not text:
+            return "I heard you. How can I help?"
+        s = text.strip()
+        # Remove replacement chars and non-printables
+        s = s.replace("\ufffd", "")
+        s = re.sub(r"[\x00-\x1F]", " ", s)
+        # Collapse excessive repeats of short words
+        s = re.sub(r"\b(\w{1,10})(?:\s+\1){2,}\b", r"\1", s)
+        # If the text is mostly repeated 'len' or non-letters, fallback
+        letters = re.findall(r"[A-Za-z]", s)
+        if len(letters) < max(5, len(s) // 10):
+            return "Thanks! I’m here. What would you like me to do?"
+        # Trim overly long outputs
+        s = s[:240]
+        return s.strip()
+
     def _speak(self, text: str):
         """Synthesize and play speech using Piper TTS"""
         try:
@@ -382,6 +472,14 @@ and interaction system. Keep responses concise (1-2 sentences) and natural. Be h
             import tempfile
             import sounddevice as sd
             import soundfile as sf
+            # Ensure Piper is configured even when called outside the main loop
+            if self._piper_model is None or not self._piper_model_path:
+                try:
+                    self._load_piper()
+                except Exception:
+                    pass
+            # Clean and sanitize assistant text before TTS
+            text = self._postprocess_response(self._extract_assistant_content(text))
             
             # Create temporary WAV file
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -402,7 +500,9 @@ and interaction system. Keep responses concise (1-2 sentences) and natural. Be h
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                encoding="utf-8",
+                errors="replace",
             )
             
             stdout, stderr = proc.communicate(input=text)

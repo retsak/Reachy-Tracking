@@ -560,6 +560,7 @@ def get_status():
         "current_target_id": current_target_id,
         "current_target": target_info,
         "candidates": LATEST_CANDIDATES,
+        "volume": int(getattr(robot, 'audio_volume', 0.25) * 100),
         "pose": {
              "head_yaw": robot.current_yaw, # We might need to expose these from robot controller
              "head_pitch": robot.current_pitch,
@@ -688,7 +689,8 @@ VOICE_STATE = {
     "last_response": "",
     "conversation_history": [],
     "models": {},
-    "error": None
+    "error": None,
+    "volume": 25,
 }
 voice_assistant = None
 
@@ -743,6 +745,24 @@ def voice_status():
     """Get voice assistant status"""
     return VOICE_STATE
 
+@app.post("/api/voice/volume")
+def set_voice_volume(data: dict):
+    """Set speaker volume percentage (0-100)."""
+    global VOICE_STATE, robot
+    try:
+        vol = int(data.get("volume", 25))
+        vol = max(0, min(100, vol))
+        VOICE_STATE["volume"] = vol
+        # Apply to robot controller (0.0 - 1.0)
+        try:
+            robot.set_audio_volume(vol / 100.0)
+        except Exception:
+            pass
+        return {"status": "ok", "volume": vol}
+    except Exception as e:
+        logger.error(f"Volume set error: {e}")
+        return {"status": "error", "message": str(e)}
+
 @app.post("/api/voice/text_command")
 async def text_command(data: dict):
     """Process a text command through the LLM"""
@@ -766,6 +786,7 @@ async def text_command(data: dict):
         
         # Optionally speak the response
         if data.get("speak", False):
+            logger.info("[VOICE] Speak requested: sending TTS to robot")
             voice_assistant.speak_text(response)
         
         return {"status": "ok", "response": response}

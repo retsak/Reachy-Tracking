@@ -8,6 +8,7 @@ import queue
 import soundfile as sf
 import scipy.signal
 import os
+import tempfile
 from reachy_mini import ReachyMini as SDKReachyMini
 from reachy_sdk_shim import ReachyMini, create_head_pose
 
@@ -44,6 +45,19 @@ class RobotController:
         self.current_body_yaw = 0.0
         self.current_antenna_left = 0.0
         self.current_antenna_right = 0.0
+
+        # Audio volume (0.0 - 1.0). Default 25%.
+        self.audio_volume = 0.25
+
+    def set_audio_volume(self, volume: float):
+        """Set speaker volume (0.0 - 1.0)."""
+        try:
+            v = float(volume)
+        except Exception:
+            return
+        v = max(0.0, min(1.0, v))
+        self.audio_volume = v
+        print(f"[AUDIO] Volume set to {int(v*100)}%")
 
     @property
     def is_connected(self):
@@ -534,95 +548,144 @@ class RobotController:
         # Use a background thread to avoid blocking
         threading.Thread(target=self._play_sound_sync, args=(filename,), daemon=True).start()
 
-        def play_sound_from_file(self, filepath: str):
-            """Play audio from an absolute file path (used for TTS output)"""
-            threading.Thread(target=self._play_audio_file, args=(filepath,), daemon=True).start()
-    
-        def _play_audio_file(self, filepath: str):
-            """Internal method to play audio from any file path"""
-            if not os.path.exists(filepath):
-                print(f"[AUDIO] File not found: {filepath}")
-                return
-        
-            print(f"[AUDIO] Playing from: {filepath}")
-        
-            # Pause camera reads to prevent OpenCV/SDK resource conflicts
-            self._pause_camera_reads = True
-            time.sleep(0.1)
-        
+    def play_sound_from_file(self, filepath: str):
+        """Play audio from an absolute file path (used for TTS output)."""
+        threading.Thread(target=self._play_audio_file, args=(filepath,), daemon=True).start()
+
+    def _play_audio_file(self, filepath: str):
+        """Internal method to play audio from any file path."""
+        if not os.path.exists(filepath):
+            print(f"[AUDIO] File not found: {filepath}")
+            return
+
+        print(f"[AUDIO] Playing from: {filepath}")
+        tempdir = os.path.abspath(tempfile.gettempdir())
+        is_temp_file = os.path.abspath(filepath).startswith(tempdir)
+
+        # Try multiple times with increasing timeouts
+        for attempt in range(3):
             try:
-                from reachy_mini import ReachyMini as SDKReachyMini
-            
-                with SDKReachyMini(log_level="ERROR", media_backend="default") as mini:
+                timeout = 10 + (attempt * 5)  # 10s, 15s, 20s
+                print(f"[AUDIO] Attempt {attempt + 1}: connecting with {timeout}s timeout...")
+                
+                with SDKReachyMini(log_level="ERROR", media_backend="default", timeout=timeout) as mini:
                     data, samplerate_in = sf.read(filepath, dtype="float32")
+
                     output_rate = mini.media.get_output_audio_samplerate()
                     if samplerate_in != output_rate:
                         new_len = int(len(data) * (output_rate / samplerate_in))
                         data = scipy.signal.resample(data, new_len)
+
                     if data.ndim > 1:
                         data = np.mean(data, axis=1)
+
+                    # Apply volume scaling
+                    try:
+                        data = (data * float(self.audio_volume)).astype('float32')
+                    except Exception:
+                        pass
+
                     mini.media.start_playing()
+                    print(f"[AUDIO] Playing {len(data)} samples...")
+                    # Push samples in chunks
                     chunk_size = 1024
                     for i in range(0, len(data), chunk_size):
                         chunk = data[i : i + chunk_size]
                         mini.media.push_audio_sample(chunk)
-                    time.sleep(0.5)
+
+                    # Wait for playback to complete
+                    time.sleep(len(data) / float(output_rate) + 0.5)
                     mini.media.stop_playing()
                     print(f"[AUDIO] Finished: {filepath}")
+                    # Delete temporary file if it was created by TTS
+                    if is_temp_file:
+                        try:
+                            os.remove(filepath)
+                            print(f"[AUDIO] Deleted temp file: {filepath}")
+                        except Exception as de:
+                            print(f"[AUDIO] Temp delete failed: {de}")
+                    return  # Success
+            except TimeoutError:
+                if attempt < 2:
+                    print(f"[AUDIO] Timeout, retrying with longer timeout...")
+                    time.sleep(1)
+                else:
+                    print(f"[AUDIO] Failed to connect after 3 attempts")
+                    # Cleanup on failure for temp files
+                    if is_temp_file:
+                        try:
+                            os.remove(filepath)
+                            print(f"[AUDIO] Deleted temp file after failure: {filepath}")
+                        except Exception as de:
+                            print(f"[AUDIO] Temp delete failed: {de}")
             except Exception as e:
                 print(f"[AUDIO] Error playing file: {e}")
-            finally:
-                self._pause_camera_reads = False
-                self._reapply_camera_settings = True
-                time.sleep(0.1)
+                # Cleanup on error for temp files
+                if is_temp_file:
+                    try:
+                        os.remove(filepath)
+                        print(f"[AUDIO] Deleted temp file after error: {filepath}")
+                    except Exception as de:
+                        print(f"[AUDIO] Temp delete failed: {de}")
 
     def _play_sound_sync(self, filename: str):
         if not self.host:
-             print("Cannot play sound: No host known.")
-             return
+            print("Cannot play sound: No host known.")
+            return
 
-        # Resolve path
+        # Resolve path (default voice directory)
         base_path = os.path.join(os.getcwd(), "Audio", "Default Voice")
         file_path = os.path.join(base_path, filename)
-        
+
         if not os.path.exists(file_path):
             print(f"[AUDIO] File not found: {file_path}")
             return
-            
+
         print(f"[AUDIO] Playing: {filename}")
-        
-        # Don't pause camera - run audio in background
-        # The camera pause was causing video freeze issues
-        
-        try:
-            # Reuse existing MediaManager instance instead of creating new one
-            if not self.mini:
-                print("[AUDIO] Error: MediaManager not available")
-                return
-            
-            data, samplerate_in = sf.read(file_path, dtype="float32")
 
-            # Resample if needed
-            output_rate = self.mini.media.get_output_audio_samplerate()
-            if samplerate_in != output_rate:
-                # Calculate new length
-                new_len = int(len(data) * (output_rate / samplerate_in))
-                data = scipy.signal.resample(data, new_len)
-            
-            # Mono conversion
-            if data.ndim > 1:
-                data = np.mean(data, axis=1)
-
-            self.mini.media.start_playing()
-            
-            chunk_size = 1024
-            for i in range(0, len(data), chunk_size):
-                chunk = data[i : i + chunk_size]
-                self.mini.media.push_audio_sample(chunk)
-
-            time.sleep(1.0) 
-            self.mini.media.stop_playing()
-            print(f"[AUDIO] Finished: {filename}")
+        # Try multiple times with increasing timeouts
+        for attempt in range(3):
+            try:
+                timeout = 10 + (attempt * 5)  # 10s, 15s, 20s
+                print(f"[AUDIO] Attempt {attempt + 1}: connecting with {timeout}s timeout...")
                 
-        except Exception as e:
-            print(f"[AUDIO] Error playing sound: {e}")
+                with SDKReachyMini(log_level="ERROR", media_backend="default", timeout=timeout) as mini:
+                    data, samplerate_in = sf.read(file_path, dtype="float32")
+
+                    # Resample if needed
+                    output_rate = mini.media.get_output_audio_samplerate()
+                    if samplerate_in != output_rate:
+                        new_len = int(len(data) * (output_rate / samplerate_in))
+                        data = scipy.signal.resample(data, new_len)
+                
+                    # Mono conversion
+                    if data.ndim > 1:
+                        data = np.mean(data, axis=1)
+
+                    # Apply volume scaling
+                    try:
+                        data = (data * float(self.audio_volume)).astype('float32')
+                    except Exception:
+                        pass
+
+                    mini.media.start_playing()
+                    print(f"[AUDIO] Playing {len(data)} samples...")
+                    # Push samples in chunks
+                    chunk_size = 1024
+                    for i in range(0, len(data), chunk_size):
+                        chunk = data[i : i + chunk_size]
+                        mini.media.push_audio_sample(chunk)
+
+                    # Wait for playback to complete
+                    time.sleep(len(data) / float(output_rate) + 0.5)
+                    mini.media.stop_playing()
+                    print(f"[AUDIO] Finished: {filename}")
+                    return  # Success
+            except TimeoutError:
+                if attempt < 2:
+                    print(f"[AUDIO] Timeout, retrying with longer timeout...")
+                    time.sleep(1)
+                else:
+                    print(f"[AUDIO] Failed to connect after 3 attempts")
+            except Exception as e:
+                print(f"[AUDIO] Error playing sound: {e}")
