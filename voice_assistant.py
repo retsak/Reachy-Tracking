@@ -111,9 +111,8 @@ class VoiceAssistant:
                 import platform
                 
                 # Prefer small but higher-quality CPU-friendly models (smallest first)
-                # Prefer Gemma 3 4B first as requested, then smaller fallbacks
+                # Google Gemma 2 (2B) is the preferred stable model
                 fallbacks = [
-                    "google/gemma-3-4b-it",
                     "google/gemma-2-2b-it",
                     "microsoft/Phi-3-mini-4k-instruct",
                     "Qwen/Qwen2.5-0.5B-Instruct",
@@ -128,7 +127,7 @@ class VoiceAssistant:
                     load_dtype = torch.float16
                 elif use_mps and platform.system() == "Darwin":
                     self.device = "mps"
-                    load_dtype = torch.float32
+                    load_dtype = torch.float16
                 else:
                     self.device = "cpu"
                     load_dtype = torch.float32
@@ -145,24 +144,70 @@ class VoiceAssistant:
                         hf_token = None
                 auth_kwargs = {"token": hf_token} if hf_token else {}
 
+                # Memory-Aware Filtering
+                try:
+                    import psutil
+                    total_ram_gb = psutil.virtual_memory().total / (1024 ** 3)
+                    logger.info(f"System RAM detected: {total_ram_gb:.1f} GB")
+                    
+                    # Heuristic: Reserve 40% for OS + other apps, use 60% for model
+                    safe_budget_gb = total_ram_gb * 0.6
+                    
+                    # Approximate size in GB (assuming float16 or int8 quantization effects)
+                    model_sizes = {
+                        "google/gemma-3-4b-it": 8.5,
+                        "google/gemma-2-2b-it": 5.0,
+                        "microsoft/Phi-3-mini-4k-instruct": 7.5,
+                        "Qwen/Qwen2.5-0.5B-Instruct": 1.5,
+                        "microsoft/Phi-3.5-mini-instruct": 8.0,
+                        "TinyLlama/TinyLlama-1.1B-Chat-v1.0": 2.5
+                    }
+                    
+                    filtered_fallbacks = []
+                    for m in fallbacks:
+                        size = model_sizes.get(m, 5.0) # default to 5GB if unknown
+                        if size <= safe_budget_gb:
+                            filtered_fallbacks.append(m)
+                        else:
+                            logger.warning(f"Skipping {m} (est {size}GB) due to memory budget ({safe_budget_gb:.1f}GB)")
+                    
+                    if filtered_fallbacks:
+                        fallbacks = filtered_fallbacks
+                        logger.info(f"Memory-safe model list: {fallbacks}")
+                    else:
+                        logger.warning("No models fit safe budget! Falling back to smallest unsafe option.")
+                        fallbacks = [fallbacks[-1]] # Try the absolute smallest (Qwen/TinyLlama)
+                        
+                except ImportError:
+                    logger.warning("psutil not installed, skipping memory checks")
+                except Exception as e:
+                    logger.error(f"Memory check error: {e}")
+
                 for model_name in fallbacks:
                     try:
                         logger.info(f"Loading LLM model: {model_name}...")
                         self._llm_tokenizer = AutoTokenizer.from_pretrained(
                             model_name, trust_remote_code=True, cache_dir=str(self.llm_dir), use_fast=True, **auth_kwargs
                         )
+                        
+                        # Simplify loading: Avoid device_map="auto" on MPS/CPU to prevent Accelerate issues
+                        # Only use device_map="auto" for CUDA unless explicitly needed
+                        use_device_map = (self.device == "cuda")
+                        
                         self._llm_model = AutoModelForCausalLM.from_pretrained(
                             model_name,
                             torch_dtype=load_dtype,
-                            device_map=("auto" if self.device != "cpu" else "cpu"),
-                            low_cpu_mem_usage=False,
+                            device_map="auto" if use_device_map else None,
+                            low_cpu_mem_usage=(self.device == "cuda"), # Only True if using device_map
                             trust_remote_code=True,
                             cache_dir=str(self.llm_dir),
                             **auth_kwargs
                         )
-                        # Ensure model is on expected device
-                        if self.device == "cpu":
-                            self._llm_model.to("cpu")
+                        
+                        # Manual device placement for MPS/CPU
+                        if not use_device_map:
+                            self._llm_model.to(self.device)
+
                         # Inference-only mode
                         self._llm_model.eval()
 
@@ -203,6 +248,11 @@ class VoiceAssistant:
                     except Exception as e:
                         last_error = e
                         logger.error(f"Failed to load {model_name}: {e}")
+                        # Write to detailed log for debugging
+                        with open("voice_error.log", "a") as f:
+                            import traceback
+                            f.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}] Error loading {model_name}:\n")
+                            f.write(traceback.format_exc())
 
                 if self._llm_model is None:
                     # Propagate the last error
@@ -211,7 +261,7 @@ class VoiceAssistant:
                 else:
                     logger.info(f"Using LLM model: {selected}")
             except Exception as e:
-                logger.error(f"Failed to load Qwen3: {e}", exc_info=True)
+                logger.error(f"Failed to load LLM: {e}", exc_info=True)
                 raise
         return self._llm_model, self._llm_tokenizer
     

@@ -18,3 +18,4 @@ webrtcvad
 silero-vad
 hf_xet
 huggingface-hub
+psutil

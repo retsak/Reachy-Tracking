@@ -112,8 +112,7 @@ def download_llm_model():
 
         # Prefer smaller, CPU-friendly models to reduce cold start and disk usage
         fallbacks = [
-            "google/gemma-3-4b-it",            # preferred
-            "google/gemma-2-2b-it",            # ~2B, still reasonable
+            "google/gemma-2-2b-it",            # ~2B, preferred stable model
             "microsoft/Phi-3-mini-4k-instruct",# ~3B, capable
             "Qwen/Qwen2.5-0.5B-Instruct",      # ~0.5B, very light
             "microsoft/Phi-3.5-mini-instruct", # larger (~5GB shards), last resort

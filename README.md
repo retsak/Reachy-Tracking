@@ -63,7 +63,7 @@ python .\setup_model_assistant.py
 
 What it does:
 - Caches models under [models/](models/) so first-run is faster.
-- Tries preferred LLMs (Gemma 3 4B → Gemma 2 2B → Phi-3 Mini 4k → Qwen2.5 0.5B → Phi-3.5 Mini → TinyLlama).
+- Tries preferred LLMs (Gemma 2 2B → Phi-3 Mini 4k → Qwen2.5 0.5B → Phi-3.5 Mini → TinyLlama).
 - If Gemma access is gated, it prompts for Hugging Face login and retries once.
 
 ### 4) Start the app
@@ -219,7 +219,7 @@ python .\setup_model_assistant.py
 
 ## Hugging Face Auth (Gated Models)
 
-Some models (e.g., Gemma 3 4B) require accepting a license and logging in.
+Some models (e.g., Gemma 2 2B) require accepting a license and logging in.
 
 ### Login
 ```powershell
