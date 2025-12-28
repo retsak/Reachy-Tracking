@@ -17,6 +17,10 @@ class RobotController:
         self.base_url = None
         self.camera = None
         self._is_connected_to_api = False
+        # Windows DirectShow exposure defaults (tune as needed)
+        self.win_exposure_mode = 0.75   # 0.75=manual, 0.25=auto
+        self.win_exposure_value = -4    # less negative -> brighter on many webcams
+        self.win_gain = 12.0            # moderate gain boost for dim scenes
         
         # Command Queue for serialized execution
         self.command_queue = queue.Queue()
@@ -122,6 +126,23 @@ class RobotController:
                         if ret:
                             self.camera = cap
                             print(f"Camera initialized on index {idx} (MJPEG 15FPS Requested).")
+
+                            try:
+                                fourcc = int(self.camera.get(cv2.CAP_PROP_FOURCC))
+                                fps = self.camera.get(cv2.CAP_PROP_FPS)
+                                width = self.camera.get(cv2.CAP_PROP_FRAME_WIDTH)
+                                height = self.camera.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                                auto_exp = self.camera.get(cv2.CAP_PROP_AUTO_EXPOSURE)
+                                exp_val = self.camera.get(cv2.CAP_PROP_EXPOSURE)
+                                gain_val = self.camera.get(cv2.CAP_PROP_GAIN)
+                                # Log the actual mode the driver applied for quick debugging
+                                print(
+                                    f"[CAMERA] Mode -> {width:.0f}x{height:.0f} @ {fps:.1f} FPS, "
+                                    f"FOURCC={fourcc:08x}, AutoExposure={auto_exp:.2f}, "
+                                    f"Exposure={exp_val:.2f}, Gain={gain_val:.1f}"
+                                )
+                            except Exception as elog:
+                                print(f"[CAMERA] Failed to read back mode: {elog}")
                             
                             if self._camera_thread is None or not self._camera_thread.is_alive():
                                 self._camera_thread = threading.Thread(target=self._camera_worker, daemon=True)
@@ -139,13 +160,31 @@ class RobotController:
         self._is_connected_to_api = api_success
 
     def _enforce_camera_config(self, cap):
-        """Forces the camera into the correct mode (MJPEG/15FPS) to fix exposure/dimming issues on Mac."""
+        """Force MJPEG + 640x480 @15fps and enable auto exposure where supported."""
         try:
             # Set MJPEG first to allow higher resolutions/rates without USB bandwidth choke
             cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             cap.set(cv2.CAP_PROP_FPS, 15) 
+
+            # Windows DirectShow: 0.25 requests auto exposure
+            if platform.system() == 'Windows':
+                cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, self.win_exposure_mode)
+                cap.set(cv2.CAP_PROP_EXPOSURE, self.win_exposure_value)
+                cap.set(cv2.CAP_PROP_GAIN, self.win_gain)
+
+            # Read back and, if the driver ignored settings, try once more at 640x480/15
+            try:
+                w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                if w > 640 or h > 480 or fps > 20:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    cap.set(cv2.CAP_PROP_FPS, 15)
+            except Exception:
+                pass
         except Exception as eobj:
              print(f"Warning: Failed to set camera config: {eobj}")
 
