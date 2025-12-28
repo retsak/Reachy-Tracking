@@ -55,7 +55,9 @@ pip install -r requirements.txt
 ### 3) Pre-cache AI models (recommended)
 Use the setup helper to download YOLOv8, Whisper, LLMs, and a Piper voice into the local `models/` folder.
 
+For gated models (like Gemma), you must be logged in to Hugging Face:
 ```powershell
+hf auth login
 python .\setup_model_assistant.py
 ```
 
