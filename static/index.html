@@ -4,709 +4,384 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reachy Tracking</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <title>Reachy Control</title>
+    <link rel="stylesheet" href="/static/style.css?v=2">
     <link rel="icon"
         href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤖</text></svg>">
 </head>
 
 <body>
-    <div class="app-container">
-        <!-- Top Row: Video and Manual Controls -->
-        <div class="top-row"
-            style="display: flex; gap: 20px; width: 100%; align-items: flex-start; justify-content: center; flex-wrap: wrap;">
 
-            <!-- Video Card -->
-            <div class="glass-card" style="flex: 3; min-width: 600px;">
-                <div class="header">
-                    <h1>Reachy Tracking</h1>
-                    <p class="subtitle">Autonomous AI Sentry</p>
+    <div class="dashboard">
+        <!-- ══════════════════════════════════════
+         HEADER
+         ══════════════════════════════════════ -->
+        <header class="header">
+            <h1>🤖 Reachy Control</h1>
+            <div class="header-status">
+                <span><span class="status-dot"></span><span id="status-text">Ready</span></span>
+                <span>🔌 Connected</span>
+            </div>
+        </header>
+
+        <!-- ══════════════════════════════════════
+         LEFT SIDEBAR - Quick Actions
+         ══════════════════════════════════════ -->
+        <div class="panel sidebar-left">
+            <div class="panel-title">Quick Actions</div>
+            <div class="panel-content">
+                <div class="action-list">
+                    <button class="action-btn active" id="wiggle-btn">
+                        <span class="icon">🎭</span> Wiggle Mode
+                    </button>
+                    <button class="action-btn" id="pause-btn">
+                        <span class="icon">⏸️</span> Pause Tracking
+                    </button>
+                    <button class="action-btn" id="reset-btn">
+                        <span class="icon">🔄</span> Reset Position
+                    </button>
+                    <button class="action-btn" id="voice-btn">
+                        <span class="icon">🎤</span> Voice Assistant
+                    </button>
                 </div>
 
-                <div class="video-wrapper">
-                    <img src="/video_feed" alt="Reachy Video Feed" id="video-feed">
-                </div>
-
-                <div class="status-bar">
-                    <div class="status-pill">
-                        <span class="status-dot"></span>
-                        <span id="status-text">System Active</span>
-                    </div>
-                    <button id="reset-btn" class="status-pill"
-                        style="cursor: pointer; margin-left: 10px; background: rgba(255, 50, 50, 0.2); border: 1px solid rgba(255, 50, 50, 0.4);">
-                        Reset Robot
-                    </button>
-                    <button id="pause-btn" class="status-pill"
-                        style="cursor: pointer; margin-left: 10px; background: rgba(255, 165, 0, 0.2); border: 1px solid rgba(255, 165, 0, 0.4);">
-                        Pause
-                    </button>
-                    <button id="wiggle-btn" class="status-pill"
-                        style="cursor: pointer; margin-left: 10px; background: rgba(147, 51, 234, 0.2); border: 1px solid rgba(147, 51, 234, 0.4);">
-                        Wiggle: On
-                    </button>
-                    <button id="power-btn" class="status-pill"
-                        style="cursor: pointer; margin-left: 10px; background: rgba(220, 38, 38, 0.2); border: 1px solid rgba(220, 38, 38, 0.4);">
-                        Power Off
-                    </button>
-                        <button id="voice-btn" class="status-pill"
-                            style="cursor: pointer; margin-left: 10px; background: rgba(34, 197, 94, 0.2); border: 1px solid rgba(34, 197, 94, 0.4);">
-                            🎤 Voice: Off
+                <div style="margin-top:24px;">
+                    <div class="panel-title" style="padding:0; border:none; margin-bottom:12px;">Motor Mode</div>
+                    <div class="action-list">
+                        <button class="action-btn" onclick="setMotorMode('stiff')">
+                            <span class="icon">💪</span> Stiff
                         </button>
-                        <div class="status-pill" style="display:flex; align-items:center; gap:8px; margin-left:10px;">
-                            <span style="color:#a0a0a0;">🔊 Vol:</span>
-                            <span id="top-volume-val" style="color:#e0e0e0;">25%</span>
-                            <input type="range" id="top-volume" min="0" max="100" value="25" step="1" style="width:120px;">
-                        </div>
-                </div>
-            </div>
-
-            <!-- Manual Controls Panel (Initially Hidden) -->
-            <div id="manual-controls" class="glass-card"
-                style="display: none; flex: 1; min-width: 300px; margin-top: 0;">
-                <div class="header">
-                    <h2>Manual Control (Paused)</h2>
-                </div>
-
-                <div class="control-group">
-                    <h3>Antennas</h3>
-                    <div class="slider-row">
-                        <label>Left: <span id="val-ant-l">0</span>°</label>
-                        <input type="range" id="ant-l" min="-90" max="90" value="0">
-                    </div>
-                    <div class="slider-row">
-                        <label>Right: <span id="val-ant-r">0</span>°</label>
-                        <input type="range" id="ant-r" min="-90" max="90" value="0">
+                        <button class="action-btn" onclick="setMotorMode('soft')">
+                            <span class="icon">☁️</span> Soft
+                        </button>
+                        <button class="action-btn" onclick="setMotorMode('limp')">
+                            <span class="icon">💤</span> Limp
+                        </button>
                     </div>
                 </div>
 
-                <div class="control-group">
-                    <h3>Head</h3>
-                    <div class="slider-row">
-                        <label>Yaw (L/R): <span id="val-head-y">0</span>°</label>
-                        <input type="range" id="head-y" min="-90" max="90" value="0">
-                    </div>
-                    <div class="slider-row">
-                        <label>Pitch (U/D): <span id="val-head-p">0</span>°</label>
-                        <input type="range" id="head-p" min="-45" max="45" value="0">
-                    </div>
-                    <div class="slider-row">
-                        <label>Roll (Tilt): <span id="val-head-r">0</span>°</label>
-                        <input type="range" id="head-r" min="-45" max="45" value="0">
-                    </div>
-                </div>
-
-                <div class="control-group">
-                    <h3>Body</h3>
-                    <div class="slider-row">
-                        <label>Yaw (Base): <span id="val-body-y">0</span>°</label>
-                        <input type="range" id="body-y" min="-150" max="150" value="0">
-                    </div>
-                </div>
-
-                <div class="control-group">
-                    <h3>Motor Mode</h3>
-                    <div style="display: flex; gap: 10px;">
-                        <button class="status-pill" onclick="setMotorMode('stiff')"
-                            style="cursor:pointer; background:rgba(50,205,50,0.2); border:1px solid rgba(50,205,50,0.4); color:#fff; flex:1;">Stiff</button>
-                        <button class="status-pill" onclick="setMotorMode('soft')"
-                            style="cursor:pointer; background:rgba(59,130,246,0.2); border:1px solid rgba(59,130,246,0.4); color:#fff; flex:1;">Soft</button>
-                        <button class="status-pill" onclick="setMotorMode('limp')"
-                            style="cursor:pointer; background:rgba(239,68,68,0.2); border:1px solid rgba(239,68,68,0.4); color:#fff; flex:1;">Limp</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- System Tuning Panel -->
-        <div id="tuning-panel" class="glass-card" style="margin-top: 20px; width: 100%;">
-            <div class="header">
-                <h2>System Tuning</h2>
-            </div>
-            <div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center;">
-                <div class="control-group" style="flex: 1; min-width: 200px;">
-                    <label>Detection Interval (s): <span id="val-det-int">0.05</span></label>
-                    <input type="number" id="det-int" step="0.01" min="0.01" max="1.0" value="0.05"
-                        style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); color: white;">
-                </div>
-                <div class="control-group" style="flex: 1; min-width: 200px;">
-                    <label>Command Interval (s): <span id="val-cmd-int">1.2</span></label>
-                    <input type="number" id="cmd-int" step="0.1" min="0.1" max="5.0" value="1.2"
-                        style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); color: white;">
-                </div>
-                <div class="control-group" style="flex: 1; min-width: 200px;">
-                    <label>Stream Max FPS: <span id="val-fps-cap">60</span></label>
-                    <input type="number" id="fps-cap" step="1" min="1" max="60" value="60"
-                        style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); color: white;">
-                </div>
-                <div class="control-group" style="flex: 1; min-width: 200px;">
-                    <label>Min Score: <span id="val-min-score">250</span></label>
-                    <input type="number" id="min-score" step="10" min="0" max="500" value="250"
-                        style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); color: white;">
-                </div>
-                <div class="control-group" style="flex: 1; min-width: 200px;">
-                    <label>Cache Limit (s): <span id="val-rec-timeout">2.0</span></label>
-                    <input type="number" id="rec-timeout" step="0.5" min="0.5" max="10.0" value="2.0"
-                        style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.2); color: white;">
-                </div>
-                <div class="control-group" style="flex: 0 0 100px; display: flex; align-items: flex-end;">
-                    <button id="update-tuning-btn" class="status-pill"
-                        style="cursor: pointer; width: 100%; background: rgba(59, 130, 246, 0.4); border: 1px solid rgba(59, 130, 246, 0.6);">
-                        Update
+                <div style="margin-top:auto; padding-top:24px;">
+                    <button class="action-btn danger" id="power-btn">
+                        <span class="icon">⛔</span> Shutdown
                     </button>
                 </div>
             </div>
         </div>
 
-        <!-- Candidates Table -->
-        <div class="glass-card" style="margin-top: 20px; width: 100%;">
-            <div class="header">
-                <h2>🧙‍♂️ Debug Pane 🪄</h2>
-            </div>
-            
-            <!-- Voice Conversation Panel -->
-            <div id="voice-panel" class="glass-card" style="margin-top: 20px; width: 100%; display: none;">
-                <div class="header">
-                    <h2>🎤 Voice Assistant</h2>
-                    <div style="display: flex; gap: 10px; margin-top: 10px; font-size: 0.85em;">
-                        <span id="voice-status-listening" style="color: #888;">● Idle</span>
-                        <span id="voice-status-model" style="color: #888;">Model: Loading...</span>
-                    </div>
+        <!-- ══════════════════════════════════════
+         CENTER - Video + Manual Controls
+         ══════════════════════════════════════ -->
+        <div class="main-center">
+            <!-- Video Panel - COMPACT -->
+            <div class="panel video-panel">
+                <div class="video-frame">
+                    <img src="/video_feed" alt="Video Feed" id="video-feed">
+                    <div class="video-label">LIVE FEED</div>
                 </div>
-                <div style="padding: 15px;">
-                    <div style="margin-bottom: 15px;">
-                        <label style="display: block; margin-bottom: 5px; color: #a0a0a0;">Text Command:</label>
-                        <div style="display: flex; gap: 10px;">
-                            <input type="text" id="text-command-input" placeholder="Type a command or question..." 
-                                style="flex: 1; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.3); color: white;">
-                            <button id="send-text-btn" class="status-pill" 
-                                style="cursor: pointer; background: rgba(59, 130, 246, 0.4); border: 1px solid rgba(59, 130, 246, 0.6); padding: 10px 20px;">
-                                Send
-                            </button>
-                            <button id="speak-text-btn" class="status-pill" 
-                                style="cursor: pointer; background: rgba(34, 197, 94, 0.4); border: 1px solid rgba(34, 197, 94, 0.6); padding: 10px 20px;">
-                                Send & Speak
-                            </button>
+            </div>
+
+            <!-- Manual Controls -->
+            <div class="panel controls-panel">
+                <div class="panel-title">Manual Control</div>
+                <div class="panel-content" id="manual-overlay" style="opacity:0.4; pointer-events:none;">
+                    <div class="control-grid">
+                        <div class="control-group">
+                            <h4>Antennas</h4>
+                            <div class="slider-row">
+                                <div class="slider-label"><span>Left</span><span class="slider-val"
+                                        id="val-ant-l">0°</span></div>
+                                <input type="range" id="ant-l" min="-90" max="90" value="0">
+                            </div>
+                            <div class="slider-row">
+                                <div class="slider-label"><span>Right</span><span class="slider-val"
+                                        id="val-ant-r">0°</span></div>
+                                <input type="range" id="ant-r" min="-90" max="90" value="0">
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <h4>Head</h4>
+                            <div class="slider-row">
+                                <div class="slider-label"><span>Yaw</span><span class="slider-val"
+                                        id="val-head-y">0°</span></div>
+                                <input type="range" id="head-y" min="-90" max="90" value="0">
+                            </div>
+                            <div class="slider-row">
+                                <div class="slider-label"><span>Pitch</span><span class="slider-val"
+                                        id="val-head-p">0°</span></div>
+                                <input type="range" id="head-p" min="-45" max="45" value="0">
+                            </div>
+                            <div class="slider-row">
+                                <div class="slider-label"><span>Roll</span><span class="slider-val"
+                                        id="val-head-r">0°</span></div>
+                                <input type="range" id="head-r" min="-45" max="45" value="0">
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <h4>Body</h4>
+                            <div class="slider-row">
+                                <div class="slider-label"><span>Body Yaw</span><span class="slider-val"
+                                        id="val-body-y">0°</span></div>
+                                <input type="range" id="body-y" min="-150" max="150" value="0">
+                            </div>
+                        </div>
+
+                        <div class="control-group">
+                            <h4>Voice Volume</h4>
+                            <div class="slider-row">
+                                <div class="slider-label"><span>Level</span><span class="slider-val"
+                                        id="volume-val">50%</span></div>
+                                <input type="range" id="volume-slider" min="0" max="100" value="50">
+                            </div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
 
-                    <div style="margin-top: 10px; display: flex; align-items: center; gap: 12px;">
-                        <label for="voice-volume" style="color: #a0a0a0;">🔊 Volume: <span id="voice-volume-val">25%</span></label>
-                        <input type="range" id="voice-volume" min="0" max="100" value="25" step="1" 
-                            style="flex: 1;">
-                    </div>
-                
-                    <div style="margin-top: 20px; max-height: 400px; overflow-y: auto; background: rgba(0,0,0,0.3); border-radius: 8px; padding: 15px; font-family: 'Courier New', monospace;" id="conversation-log">
-                        <p style="color: #888; text-align: center;">Conversation history will appear here...</p>
-                    </div>
+        <!-- ══════════════════════════════════════
+         RIGHT SIDEBAR - Chat + Data
+         ══════════════════════════════════════ -->
+        <div class="sidebar-right">
+            <!-- Chat -->
+            <div class="panel chat-panel">
+                <div class="panel-title">Chat with Reachy</div>
+                <div class="chat-messages" id="chat-messages">
+                    <div class="msg msg-assistant">Hello! How can I help?</div>
+                </div>
+                <div class="chat-input">
+                    <input type="text" id="chat-input" placeholder="Type a message...">
+                    <button id="chat-send">Send</button>
                 </div>
             </div>
 
-            <!-- Candidates Table -->
-            <div class="glass-card" style="margin-top: 30px; width: 100%; clear: both;">
-                <div class="header">
-                    <h2>👾 Live Candidates</h2>
+            <!-- Tracking Data -->
+            <div class="panel data-panel">
+                <div class="panel-title">Live Tracking</div>
+                <div class="panel-content" style="padding:0;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Class</th>
+                                <th>Score</th>
+                            </tr>
+                        </thead>
+                        <tbody id="candidates-body"></tbody>
+                    </table>
+                    <div id="no-targets"
+                        style="padding:16px; text-align:center; color:var(--text-muted); font-size:12px;">
+                        No targets detected
+                    </div>
                 </div>
-            <table class="glass-table">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Type</th>
-                        <th>Score</th>
-                        <th>Prio</th>
-                        <th>Conf</th>
-                        <th>Ctx</th>
-                        <th>Cent</th>
-                        <th>Size</th>
-                    </tr>
-                </thead>
-                <tbody id="candidates-body">
-                    <!-- Rows injected globally -->
-                </tbody>
-            </table>
+            </div>
         </div>
     </div>
+
     <script>
-        document.getElementById('reset-btn').addEventListener('click', async () => {
-            try {
-                await fetch('/api/reset', { method: 'POST' });
-            } catch (e) {
-                console.error("Reset failed", e);
-            }
-        });
+        const $ = id => document.getElementById(id);
+        let isPaused = false, voiceEnabled = false, wiggleEnabled = true;
 
-        document.getElementById('pause-btn').addEventListener('click', async () => {
-            try {
-                const res = await fetch('/api/toggle_pause', { method: 'POST' });
-                const data = await res.json();
-                const btn = document.getElementById('pause-btn');
-                if (data.paused) {
-                    btn.innerText = "Resume";
-                    btn.style.background = "rgba(50, 205, 50, 0.2)";
-                    btn.style.borderColor = "rgba(50, 205, 50, 0.4)";
-                    document.getElementById('manual-controls').style.display = 'block';
-                } else {
-                    btn.innerText = "Pause";
-                    btn.style.background = "rgba(255, 165, 0, 0.2)";
-                    btn.style.borderColor = "rgba(255, 165, 0, 0.4)";
-                    document.getElementById('manual-controls').style.display = 'none';
-                }
-            } catch (e) {
-                console.error("Pause toggle failed", e);
-            }
-        });
+        // ══════════════════════════════════════
+        // CHAT
+        // ══════════════════════════════════════
+        function addMsg(role, text) {
+            const el = document.createElement('div');
+            el.className = `msg msg-${role}`;
+            el.textContent = text;
+            $('chat-messages').appendChild(el);
+            $('chat-messages').scrollTop = $('chat-messages').scrollHeight;
+        }
 
-        document.getElementById('wiggle-btn').addEventListener('click', async () => {
+        $('chat-send').onclick = async () => {
+            const input = $('chat-input');
+            const text = input.value.trim();
+            if (!text) return;
+            addMsg('user', text);
+            input.value = '';
             try {
-                const res = await fetch('/api/toggle_wiggle', { method: 'POST' });
-                // State update happens in polling
-            } catch (e) {
-                console.error("Wiggle toggle failed", e);
-            }
-        });
-
-        document.getElementById('power-btn').addEventListener('click', async () => {
-            if (confirm("Are you sure you want to shut down the system?")) {
-                try {
-                    await fetch('/api/shutdown', { method: 'POST' });
-                    alert("System shutting down...");
-                    window.close(); // Try to close tab
-                    document.body.innerHTML = "<h1 style='color:white;text-align:center;margin-top:20%;'>System Offline</h1>";
-                } catch (e) {
-                    console.error("Shutdown failed", e);
-                }
-            }
-        });
-
-        // Top volume control
-        const topVol = document.getElementById('top-volume');
-        const topVolVal = document.getElementById('top-volume-val');
-        topVol.addEventListener('input', () => {
-            topVolVal.textContent = `${topVol.value}%`;
-        });
-        topVol.addEventListener('change', async () => {
-            try {
-                await fetch('/api/voice/volume', {
+                const res = await fetch('/api/voice/text_command', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ volume: parseInt(topVol.value) })
+                    body: JSON.stringify({ text, speak: true })
                 });
-            } catch (e) {
-                console.error('Set volume failed', e);
-            }
-        });
-
-            // Voice Assistant Logic
-            let voiceEnabled = false;
-        
-            document.getElementById('voice-btn').addEventListener('click', async () => {
-                try {
-                    const endpoint = voiceEnabled ? '/api/voice/disable' : '/api/voice/enable';
-                    const res = await fetch(endpoint, { method: 'POST' });
-                    const data = await res.json();
-                
-                    voiceEnabled = data.voice_enabled;
-                    const btn = document.getElementById('voice-btn');
-                    const panel = document.getElementById('voice-panel');
-                
-                    if (voiceEnabled) {
-                        btn.innerText = "🎤 Voice: On";
-                        btn.style.background = "rgba(34, 197, 94, 0.4)";
-                        btn.style.borderColor = "rgba(34, 197, 94, 0.6)";
-                        panel.style.display = 'block';
-                    } else {
-                        btn.innerText = "🎤 Voice: Off";
-                        btn.style.background = "rgba(34, 197, 94, 0.2)";
-                        btn.style.borderColor = "rgba(34, 197, 94, 0.4)";
-                        panel.style.display = 'none';
-                    }
-                } catch (e) {
-                    console.error("Voice toggle failed", e);
-                    alert("Failed to toggle voice assistant: " + e.message);
-                }
-            });
-        
-            document.getElementById('send-text-btn').addEventListener('click', async () => {
-                const input = document.getElementById('text-command-input');
-                const text = input.value.trim();
-            
-                if (!text) return;
-            
-                try {
-                    addToConversation('user', text);
-                    input.value = '';
-                
-                    const res = await fetch('/api/voice/text_command', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ text: text, speak: false })
-                    });
-                
-                    const data = await res.json();
-                    if (data.status === 'ok') {
-                        addToConversation('assistant', data.response);
-                    } else {
-                        addToConversation('error', 'Error: ' + data.message);
-                    }
-                } catch (e) {
-                    console.error("Text command failed", e);
-                    addToConversation('error', 'Failed to send command');
-                }
-            });
-        
-            document.getElementById('speak-text-btn').addEventListener('click', async () => {
-                const input = document.getElementById('text-command-input');
-                const text = input.value.trim();
-            
-                if (!text) return;
-            
-                try {
-                    addToConversation('user', text);
-                    input.value = '';
-                
-                    const res = await fetch('/api/voice/text_command', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ text: text, speak: true })
-                    });
-                
-                    const data = await res.json();
-                    if (data.status === 'ok') {
-                        addToConversation('assistant', data.response);
-                    } else {
-                        addToConversation('error', 'Error: ' + data.message);
-                    }
-                } catch (e) {
-                    console.error("Text command failed", e);
-                    addToConversation('error', 'Failed to send command');
-                }
-            });
-
-            // Volume control
-            const volSlider = document.getElementById('voice-volume');
-            const volLabel = document.getElementById('voice-volume-val');
-            volSlider.addEventListener('input', () => {
-                volLabel.textContent = `${volSlider.value}%`;
-            });
-            volSlider.addEventListener('change', async () => {
-                try {
-                    await fetch('/api/voice/volume', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ volume: parseInt(volSlider.value) })
-                    });
-                } catch (e) {
-                    console.error('Set volume failed', e);
-                }
-            });
-        
-            // Allow Enter key to send
-            document.getElementById('text-command-input').addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    document.getElementById('send-text-btn').click();
-                }
-            });
-        
-            function addToConversation(role, text) {
-                const log = document.getElementById('conversation-log');
-            
-                // Clear placeholder
-                if (log.children.length === 1 && log.children[0].textContent.includes('history will appear')) {
-                    log.innerHTML = '';
-                }
-            
-                const msg = document.createElement('div');
-                msg.style.marginBottom = '15px';
-                msg.style.padding = '10px';
-                msg.style.borderRadius = '8px';
-                msg.style.borderLeft = role === 'user' ? '3px solid #3b82f6' : 
-                                       role === 'assistant' ? '3px solid #22c55e' : 
-                                       role === 'system' ? '3px solid #a855f7' :
-                                       '3px solid #ef4444';
-                msg.style.background = role === 'user' ? 'rgba(59, 130, 246, 0.1)' : 
-                                       role === 'assistant' ? 'rgba(34, 197, 94, 0.1)' :
-                                       role === 'system' ? 'rgba(168, 85, 247, 0.1)' : 
-                                       'rgba(239, 68, 68, 0.1)';
-            
-                const timestamp = document.createElement('span');
-                timestamp.style.fontSize = '0.75em';
-                timestamp.style.color = '#666';
-                timestamp.style.display = 'block';
-                timestamp.style.marginBottom = '3px';
-                timestamp.innerText = new Date().toLocaleTimeString();
-
-                const label = document.createElement('strong');
-                label.style.display = 'block';
-                label.style.marginBottom = '5px';
-                label.style.color = role === 'user' ? '#60a5fa' : 
-                                   role === 'assistant' ? '#4ade80' :
-                                   role === 'system' ? '#c084fc' : 
-                                   '#f87171';
-                label.innerText = role === 'user' ? '🗣️ You:' : 
-                                 role === 'assistant' ? '🤖 Reachy:' :
-                                 role === 'system' ? '⚙️ System:' : 
-                                 '❌ Error:';
-            
-                const content = document.createElement('span');
-                content.style.color = '#e0e0e0';
-                content.innerText = text;
-            
-                msg.appendChild(timestamp);
-                msg.appendChild(label);
-                msg.appendChild(content);
-                log.appendChild(msg);
-            
-                // Auto-scroll to bottom
-                log.scrollTop = log.scrollHeight;
-            }
-
-        // Tuning Logic
-        async function fetchTuning() {
-            try {
-                const res = await fetch('/api/tuning');
                 const data = await res.json();
-                document.getElementById('det-int').value = data.detection_interval;
-                document.getElementById('val-det-int').innerText = data.detection_interval;
-
-                document.getElementById('cmd-int').value = data.command_interval;
-                document.getElementById('val-cmd-int').innerText = data.command_interval;
-
-                document.getElementById('fps-cap').value = data.stream_fps_cap;
-                document.getElementById('val-fps-cap').innerText = data.stream_fps_cap;
-
-                document.getElementById('min-score').value = data.min_score_threshold;
-                document.getElementById('val-min-score').innerText = data.min_score_threshold;
-
-                document.getElementById('rec-timeout').value = data.recenter_timeout;
-                document.getElementById('val-rec-timeout').innerText = data.recenter_timeout;
+                if (data.response) addMsg('assistant', data.response);
             } catch (e) {
-                console.error("Fetch tuning failed", e);
+                addMsg('system', 'Error sending message');
+            }
+        };
+
+        $('chat-input').onkeypress = e => { if (e.key === 'Enter') $('chat-send').click(); };
+
+        // ══════════════════════════════════════
+        // ACTIONS
+        // ══════════════════════════════════════
+        $('reset-btn').onclick = () => fetch('/api/reset', { method: 'POST' });
+
+        $('pause-btn').onclick = async () => {
+            const res = await fetch('/api/toggle_pause', { method: 'POST' });
+            const data = await res.json();
+            isPaused = data.paused;
+            updatePauseUI();
+        };
+
+        function updatePauseUI() {
+            const btn = $('pause-btn');
+            const overlay = $('manual-overlay');
+            if (isPaused) {
+                btn.classList.add('active');
+                btn.innerHTML = '<span class="icon">▶️</span> Resume';
+                overlay.style.opacity = '1';
+                overlay.style.pointerEvents = 'auto';
+            } else {
+                btn.classList.remove('active');
+                btn.innerHTML = '<span class="icon">⏸️</span> Pause Tracking';
+                overlay.style.opacity = '0.4';
+                overlay.style.pointerEvents = 'none';
             }
         }
 
-        // Initial Fetch
-        fetchTuning();
+        $('wiggle-btn').onclick = async () => {
+            await fetch('/api/toggle_wiggle', { method: 'POST' });
+        };
 
-        document.getElementById('update-tuning-btn').addEventListener('click', async () => {
-            const payload = {
-                detection_interval: parseFloat(document.getElementById('det-int').value),
-                command_interval: parseFloat(document.getElementById('cmd-int').value),
-                stream_fps_cap: parseFloat(document.getElementById('fps-cap').value),
-                min_score_threshold: parseFloat(document.getElementById('min-score').value),
-                recenter_timeout: parseFloat(document.getElementById('rec-timeout').value)
-            };
+        $('voice-btn').onclick = async () => {
+            const ep = voiceEnabled ? '/api/voice/disable' : '/api/voice/enable';
+            const res = await fetch(ep, { method: 'POST' });
+            const data = await res.json();
+            voiceEnabled = data.voice_enabled;
+            $('voice-btn').classList.toggle('active', voiceEnabled);
+        };
 
-            try {
-                await fetch('/api/tuning', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                alert("Tuning Updated!");
-                fetchTuning(); // Refresh to confirm
-            } catch (e) {
-                console.error("Update tuning failed", e);
+        $('power-btn').onclick = async () => {
+            if (confirm('Shutdown the system?')) {
+                await fetch('/api/shutdown', { method: 'POST' });
+                document.body.innerHTML = '<div style="display:flex;height:100vh;align-items:center;justify-content:center;color:#fff;font-family:sans-serif;"><h1>System Offline</h1></div>';
             }
-        });
+        };
 
-        // Manual Control Logic
-        const sliders = ['ant-l', 'ant-r', 'head-y', 'head-p', 'head-r', 'body-y'];
-        const activeSliders = new Set(); // Track which sliders are being used
-
-        function sendManualControl() {
-            const payload = {
-                antenna_left: parseInt(document.getElementById('ant-l').value),
-                antenna_right: parseInt(document.getElementById('ant-r').value),
-                head_yaw: parseInt(document.getElementById('head-y').value) * (Math.PI / 180),
-                head_pitch: parseInt(document.getElementById('head-p').value) * (Math.PI / 180),
-                head_roll: parseInt(document.getElementById('head-r').value) * (Math.PI / 180),
-                body_yaw: parseInt(document.getElementById('body-y').value) * (Math.PI / 180)
-            };
-
-            fetch('/api/manual_control', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            }).catch(console.error);
-        }
-
-        function setMotorMode(mode) {
+        window.setMotorMode = mode => {
             fetch('/api/motor_mode', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mode: mode })
-            }).catch(console.error);
-        }
+                body: JSON.stringify({ mode })
+            });
+        };
+
+        // ══════════════════════════════════════
+        // SLIDERS
+        // ══════════════════════════════════════
+        const sliders = ['ant-l', 'ant-r', 'head-y', 'head-p', 'head-r', 'body-y'];
+        const active = new Set();
 
         sliders.forEach(id => {
-            const el = document.getElementById(id);
-            const valEl = document.getElementById('val-' + id);
-
-            // Update number display live
-            el.addEventListener('input', () => {
-                valEl.innerText = parseFloat(el.value).toFixed(2);
-            });
-
-            // Track interaction state to prevent sync fighting
-            el.addEventListener('mousedown', () => activeSliders.add(id));
-            el.addEventListener('touchstart', () => activeSliders.add(id));
-            el.addEventListener('mouseup', () => activeSliders.delete(id));
-            el.addEventListener('touchend', () => activeSliders.delete(id));
-
-            // Send command on release
-            el.addEventListener('change', () => {
-                activeSliders.delete(id); // Ensure cleared
-                sendManualControl();
-            });
+            const el = $(id), val = $('val-' + id);
+            el.oninput = () => val.textContent = el.value + '°';
+            el.onmousedown = () => active.add(id);
+            el.onmouseup = () => { active.delete(id); sendManual(); };
+            el.ontouchstart = () => active.add(id);
+            el.ontouchend = () => { active.delete(id); sendManual(); };
         });
 
-        // Poll status & SYNC POSES
+        function sendManual() {
+            if (!isPaused) return;
+            fetch('/api/manual_control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    antenna_left: +$('ant-l').value,
+                    antenna_right: +$('ant-r').value,
+                    head_yaw: +$('head-y').value * Math.PI / 180,
+                    head_pitch: +$('head-p').value * Math.PI / 180,
+                    head_roll: +$('head-r').value * Math.PI / 180,
+                    body_yaw: +$('body-y').value * Math.PI / 180
+                })
+            });
+        }
+
+        // Volume
+        $('volume-slider').oninput = e => $('volume-val').textContent = e.target.value + '%';
+        $('volume-slider').onchange = e => {
+            fetch('/api/voice/volume', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ volume: +e.target.value })
+            });
+        };
+
+        // ══════════════════════════════════════
+        // POLLING
+        // ══════════════════════════════════════
         setInterval(async () => {
             try {
-                const response = await fetch('/status');
-                const data = await response.json();
-                document.getElementById('status-text').innerText = data.status;
+                const res = await fetch('/status');
+                const data = await res.json();
 
-                // Sync Paused State
-                if (data.paused !== undefined) {
-                    const btn = document.getElementById('pause-btn');
-                    const controls = document.getElementById('manual-controls');
-                    if (data.paused) {
-                        btn.innerText = "Resume";
-                        btn.style.background = "rgba(50, 205, 50, 0.2)";
-                        btn.style.borderColor = "rgba(50, 205, 50, 0.4)";
-                        controls.style.display = 'block';
-                    } else {
-                        btn.innerText = "Pause";
-                        btn.style.background = "rgba(255, 165, 0, 0.2)";
-                        btn.style.borderColor = "rgba(255, 165, 0, 0.4)";
-                        controls.style.display = 'none';
-                    }
+                // Status
+                $('status-text').textContent = data.status || 'Ready';
+
+                // Wiggle
+                wiggleEnabled = data.wiggle_enabled;
+                $('wiggle-btn').classList.toggle('active', wiggleEnabled);
+
+                // Pause sync
+                if (data.paused !== undefined && data.paused !== isPaused) {
+                    isPaused = data.paused;
+                    updatePauseUI();
                 }
 
-                // Sync Wiggle State
-                if (data.wiggle_enabled !== undefined) {
-                    const btn = document.getElementById('wiggle-btn');
-                    if (data.wiggle_enabled) {
-                        btn.innerText = "Wiggle: On";
-                        btn.style.opacity = "1.0";
-                    } else {
-                        btn.innerText = "Wiggle: Off";
-                        btn.style.opacity = "0.5";
-                    }
-                }
-
-                // Update Candidates Table
-                if (data.candidates) {
-                    const tbody = document.getElementById('candidates-body');
+                // Candidates
+                const tbody = $('candidates-body');
+                const noT = $('no-targets');
+                if (data.candidates?.length) {
+                    noT.style.display = 'none';
                     tbody.innerHTML = '';
-                    data.candidates.sort((a, b) => b.score - a.score); // Sort best first
-
-                    data.candidates.forEach(c => {
+                    data.candidates.sort((a, b) => b.score - a.score).slice(0, 5).forEach(c => {
                         const tr = document.createElement('tr');
-                        // Highlight best
-                        if (c.id == data.current_target_id) tr.style.background = "rgba(0, 255, 0, 0.2)";
-
-                        tr.innerHTML = `
-                            <td>${c.id}</td>
-                            <td>${c.label}</td>
-                            <td style="font-weight:bold; color:#fb923c">${c.score}</td>
-                            <td>${c.priority}</td>
-                            <td>${c.confidence}</td>
-                            <td>${c.context}</td>
-                            <td>${c.centrality}</td>
-                            <td>${c.size}</td>
-                        `;
+                        if (c.id == data.current_target_id) tr.classList.add('active');
+                        tr.innerHTML = `<td>#${c.id}</td><td>${c.label}</td><td>${Math.round(c.score)}</td>`;
                         tbody.appendChild(tr);
                     });
-                }
-
-                // Sync Sliders if available and not being dragged
-                if (data.pose) {
-                    const toDeg = (rad) => (rad * 180 / Math.PI);
-
-                    const map = {
-                        'ant-l': data.pose.antenna_left, // Already Deg
-                        'ant-r': data.pose.antenna_right, // Already Deg
-                        'head-y': toDeg(data.pose.head_yaw),
-                        'head-p': toDeg(data.pose.head_pitch),
-                        'head-r': toDeg(data.pose.head_roll),
-                        'body-y': toDeg(data.pose.body_yaw)
-                    };
-
-                    sliders.forEach(id => {
-                        if (!activeSliders.has(id)) {
-                            const val = map[id];
-                            if (val !== undefined) {
-                                const el = document.getElementById(id);
-                                const valEl = document.getElementById('val-' + id);
-                                el.value = val;
-                                valEl.innerText = val.toFixed(2);
-                            }
-                        }
-                    });
-                }
-
-            } catch (e) {
-                console.error("Status fetch failed", e);
-            }
-        }, 500);
-        
-        // Poll voice status and update conversation
-        let lastConversationLength = 0;
-        setInterval(async () => {
-            if (!voiceEnabled) return;
-            
-            try {
-                const res = await fetch('/api/voice/status');
-                const data = await res.json();
-                
-                // Update listening status indicator
-                const listeningEl = document.getElementById('voice-status-listening');
-                const modelEl = document.getElementById('voice-status-model');
-                
-                if (data.listening) {
-                    listeningEl.innerHTML = '<span style="color: #22c55e;">● Listening</span>';
                 } else {
-                    listeningEl.innerHTML = '<span style="color: #888;">○ Idle</span>';
-                }
-                
-                // Show model info if available
-                if (data.models && data.models.llm) {
-                    const modelName = data.models.llm.name || 'Unknown';
-                    modelEl.innerHTML = `Model: <span style="color: #60a5fa;">${modelName}</span>`;
-                } else if (data.error) {
-                    modelEl.innerHTML = `<span style="color: #f87171;">Error: ${data.error}</span>`;
-                }
-                
-                // Update conversation if new messages
-                if (data.conversation_history && data.conversation_history.length > lastConversationLength) {
-                    const newMessages = data.conversation_history.slice(lastConversationLength);
-                    newMessages.forEach(msg => {
-                        addToConversation(msg.role, msg.content);
-                    });
-                    lastConversationLength = data.conversation_history.length;
-                }
-                
-                // Show system messages for transcripts and responses
-                if (data.last_transcript && data.last_transcript !== window.lastShownTranscript) {
-                    window.lastShownTranscript = data.last_transcript;
-                    addToConversation('system', `🎤 Heard: "${data.last_transcript}"`);
+                    tbody.innerHTML = '';
+                    noT.style.display = 'block';
                 }
 
-                // Sync volume slider with server state
-                if (typeof data.volume === 'number') {
-                    const v = data.volume;
-                    // Top bar
-                    topVol.value = v;
-                    topVolVal.textContent = `${v}%`;
-                    // Voice panel slider (if present)
-                    volSlider.value = v;
-                    volLabel.textContent = `${v}%`;
+                // Slider sync
+                if (data.pose) {
+                    const deg = r => (r * 180 / Math.PI);
+                    const map = {
+                        'ant-l': data.pose.antenna_left,
+                        'ant-r': data.pose.antenna_right,
+                        'head-y': deg(data.pose.head_yaw),
+                        'head-p': deg(data.pose.head_pitch),
+                        'head-r': deg(data.pose.head_roll),
+                        'body-y': deg(data.pose.body_yaw)
+                    };
+                    for (const [id, v] of Object.entries(map)) {
+                        if (!active.has(id)) {
+                            $(id).value = v;
+                            $('val-' + id).textContent = Math.round(v) + '°';
+                        }
+                    }
                 }
-            } catch (e) {
-                console.error("Voice status fetch failed", e);
-            }
-        }, 1000);
+
+                // Voice polling
+                if (voiceEnabled) {
+                    const vr = await fetch('/api/voice/status');
+                    const vd = await vr.json();
+                    if (vd.conversation_history?.length) {
+                        const last = vd.conversation_history[vd.conversation_history.length - 1];
+                        if (last.role === 'assistant' && window.lastA !== last.content) {
+                            window.lastA = last.content;
+                            addMsg('assistant', last.content);
+                        }
+                    }
+                }
+            } catch (e) { }
+        }, 500);
     </script>
 </body>
 
