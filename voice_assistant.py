@@ -33,6 +33,7 @@ class VoiceAssistant:
         self.robot = robot_controller
         self.running = False
         self.listening = False
+        self.device = "cpu"
         # Project-local model/cache directories
         self.base_dir = Path(__file__).parent
         self.models_dir = self.base_dir / "models"
@@ -63,10 +64,10 @@ class VoiceAssistant:
         
         # Conversation context
         self.conversation_history = []
-        self.system_prompt = """You are a friendly and helpful robot assistant named Reachy.
-    Respond in plain English with 1–2 short sentences.
-    Do not output code, lists, or markup/tokens. Speak naturally.
-    Avoid repeating words or characters; no placeholders or gibberish."""
+        self.system_prompt = """You are Reachy, a friendly robot assistant.
+    Speak in plain English with 1–2 short sentences.
+    Be relevant to the user’s message and this robot context.
+    Never output code or markup; avoid repetition and filler."""
         
         # Callbacks
         self.on_speech_detected: Optional[Callable[[str], None]] = None
@@ -101,12 +102,28 @@ class VoiceAssistant:
             try:
                 from transformers import AutoTokenizer, AutoModelForCausalLM
                 import torch
+                import platform
                 
-                # Prefer the smaller Qwen 0.5B for speed on CPU
+                # Prefer small but higher-quality CPU-friendly models (smallest first)
                 fallbacks = [
                     "Qwen/Qwen2.5-0.5B-Instruct",
-                    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+                    "google/gemma-2-2b-it",
+                    "microsoft/Phi-3-mini-4k-instruct",
+                    "microsoft/Phi-3.5-mini-instruct",
                 ]
+
+                # Select device and dtype
+                use_cuda = torch.cuda.is_available()
+                use_mps = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+                if use_cuda and platform.system() == "Windows":
+                    self.device = "cuda"
+                    load_dtype = torch.float16
+                elif use_mps and platform.system() == "Darwin":
+                    self.device = "mps"
+                    load_dtype = torch.float32
+                else:
+                    self.device = "cpu"
+                    load_dtype = torch.float32
 
                 last_error = None
                 selected = None
@@ -118,38 +135,51 @@ class VoiceAssistant:
                         )
                         self._llm_model = AutoModelForCausalLM.from_pretrained(
                             model_name,
-                            torch_dtype=torch.float32,
-                            device_map="cpu",
+                            torch_dtype=load_dtype,
+                            device_map=("auto" if self.device != "cpu" else "cpu"),
                             low_cpu_mem_usage=False,
                             trust_remote_code=True,
                             cache_dir=str(self.llm_dir)
                         )
-                        # Ensure model is on CPU explicitly
-                        self._llm_model.to("cpu")
+                        # Ensure model is on expected device
+                        if self.device == "cpu":
+                            self._llm_model.to("cpu")
                         # Inference-only mode
                         self._llm_model.eval()
 
-                        # CPU threading: use all available cores
+                        # Avoid cache-specific incompatibilities with some hub model code
                         try:
-                            import os
-                            num_threads = os.cpu_count() or 4
-                            torch.set_num_threads(num_threads)
+                            if hasattr(self._llm_model, "config"):
+                                # Disable generation cache to avoid DynamicCache.seen_tokens issues
+                                setattr(self._llm_model.config, "use_cache", False)
+                                # Use eager attention implementation for broad compatibility
+                                setattr(self._llm_model.config, "attn_implementation", "eager")
                         except Exception:
                             pass
 
+                        # CPU threading: use all available cores
+                        if self.device == "cpu":
+                            try:
+                                import os
+                                num_threads = os.cpu_count() or 4
+                                torch.set_num_threads(num_threads)
+                            except Exception:
+                                pass
+
                         # Dynamic quantization for Linear layers to speed CPU
-                        try:
-                            import torch.nn as nn
-                            from torch.ao.quantization import quantize_dynamic
-                            self._llm_model = quantize_dynamic(
-                                self._llm_model, {nn.Linear}, dtype=torch.qint8
-                            )
-                            logger.info("Applied dynamic quantization (qint8) to Linear layers.")
-                        except Exception as qe:
-                            logger.warning(f"Quantization skipped: {qe}")
+                        if self.device == "cpu":
+                            try:
+                                import torch.nn as nn
+                                from torch.ao.quantization import quantize_dynamic
+                                self._llm_model = quantize_dynamic(
+                                    self._llm_model, {nn.Linear}, dtype=torch.qint8
+                                )
+                                logger.info("Applied dynamic quantization (qint8) to Linear layers.")
+                            except Exception as qe:
+                                logger.warning(f"Quantization skipped: {qe}")
                         selected = model_name
                         logger.info(f"LLM loaded successfully: {model_name}")
-                        self.model_info["llm"] = {"name": model_name, "dir": str(self.llm_dir)}
+                        self.model_info["llm"] = {"name": model_name, "dir": str(self.llm_dir), "device": self.device, "dtype": str(load_dtype)}
                         break
                     except Exception as e:
                         last_error = e
@@ -362,6 +392,12 @@ class VoiceAssistant:
         """Generate conversational response using Qwen3"""
         try:
             import torch
+            # Fast intent short-circuit for low-power reliability
+            intent = self._intent_response(user_text)
+            if intent is not None:
+                self.conversation_history.append({"role": "user", "content": user_text})
+                self.conversation_history.append({"role": "assistant", "content": intent})
+                return intent
             
             # Build conversation
             self.conversation_history.append({"role": "user", "content": user_text})
@@ -385,13 +421,13 @@ class VoiceAssistant:
             with torch.no_grad():
                 outputs = model.generate(
                     **inputs,
-                    max_new_tokens=60,
+                    max_new_tokens=40,
                     do_sample=False,
-                    use_cache=True,
+                    use_cache=False,
                     eos_token_id=tokenizer.eos_token_id,
                     pad_token_id=tokenizer.eos_token_id,
                     no_repeat_ngram_size=3,
-                    repetition_penalty=1.15,
+                    repetition_penalty=1.2,
                 )
             
             raw = tokenizer.decode(outputs[0][len(inputs.input_ids[0]):], skip_special_tokens=True)
@@ -405,6 +441,27 @@ class VoiceAssistant:
         except Exception as e:
             logger.error(f"Response generation error: {e}", exc_info=True)
             return "I'm sorry, I encountered an error processing your request."
+
+    def _intent_response(self, text: str) -> Optional[str]:
+        """Handle simple intents without invoking the LLM."""
+        if not text:
+            return None
+        s = text.strip().lower()
+        # Greetings / phatic
+        if re.fullmatch(r"(hi|hello|hey|howdy|yo|sup|hola)[.!?\s]*", s):
+            return "Hi there! How can I help today?"
+        # "test" / "ping"
+        if re.fullmatch(r"(test|ping|hello world)[.!?\s]*", s):
+            return "I’m here and listening. What would you like me to do?"
+        # Say hi "Name"
+        m = re.search(r"say\s+hi\s+\"?([a-zA-Z][a-zA-Z\-\s']{0,30})\"?", s)
+        if m:
+            name = m.group(1).strip()
+            # Title-case the name safely
+            safe_name = re.sub(r"[^A-Za-z\-\s']", "", name).title()
+            if safe_name:
+                return f"Hi {safe_name}! Nice to meet you."
+        return None
     
     def _strip_role_prefix(self, text: str) -> str:
         """Remove leading role prefixes like 'Assistant:' from model outputs."""

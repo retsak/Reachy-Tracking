@@ -16,3 +16,4 @@ accelerate
 piper-tts
 webrtcvad
 silero-vad
+hf_xet

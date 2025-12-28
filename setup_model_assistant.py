@@ -66,23 +66,48 @@ def download_whisper_model():
         return False
 
 def download_llm_model():
-    """Download a compact, public LLM suitable for CPU into the local cache"""
-    print("\n📥 Downloading LLM (TinyLlama 1.1B Chat)...")
+    """Download one of the preferred small instruction-tuned LLMs into the local cache.
+    Tries a fallback list from smallest → larger for faster setup on CPU.
+    """
+    print("\n📥 Downloading LLM (preferred small instruct models)...")
     try:
         from transformers import AutoTokenizer, AutoModelForCausalLM
-        model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-        print("Downloading tokenizer...")
-        _ = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, cache_dir=str(LLM_DIR))
-        print("Downloading model weights...")
-        _ = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            cache_dir=str(LLM_DIR)
-        )
-        print("✓ LLM model ready")
-        return True
+
+        # Prefer smaller, CPU-friendly models to reduce cold start and disk usage
+        fallbacks = [
+            "Qwen/Qwen2.5-0.5B-Instruct",      # ~0.5B, very light
+            "google/gemma-2-2b-it",            # ~2B, still reasonable
+            "microsoft/Phi-3-mini-4k-instruct",# ~3B, capable
+            "microsoft/Phi-3.5-mini-instruct", # larger (~5GB shards), last resort
+            "TinyLlama/TinyLlama-1.1B-Chat-v1.0" # legacy fallback
+        ]
+
+        last_error = None
+        for model_name in fallbacks:
+            try:
+                print(f"Downloading tokenizer for: {model_name}...")
+                _ = AutoTokenizer.from_pretrained(
+                    model_name,
+                    trust_remote_code=True,
+                    cache_dir=str(LLM_DIR),
+                    use_fast=True
+                )
+                print("Downloading model weights...")
+                _ = AutoModelForCausalLM.from_pretrained(
+                    model_name,
+                    trust_remote_code=True,
+                    cache_dir=str(LLM_DIR)
+                )
+                print(f"✓ LLM cached: {model_name}")
+                return True
+            except Exception as e:
+                last_error = e
+                print(f"✗ Failed to cache {model_name}: {e}")
+
+        print(f"✗ Error downloading LLMs: {last_error}")
+        return False
     except Exception as e:
-        print(f"✗ Error downloading LLM: {e}")
+        print(f"✗ Error initializing Transformers for LLM download: {e}")
         return False
 
 def download_piper_voice():
@@ -153,7 +178,9 @@ def main():
         "webrtcvad",
         "soundfile",
         "scipy",
-        "numpy"
+        "numpy",
+        # Enable accelerated Hub downloads when Xet Storage is configured
+        "hf_xet"
     ]
     
     all_ok = True
