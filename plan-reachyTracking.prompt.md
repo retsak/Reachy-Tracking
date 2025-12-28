@@ -59,3 +59,35 @@ Next Actions
 - Rank the categories and pick 2–3 Now items for immediate spikes.
 - Outline acceptance criteria and quick test plans for chosen items.
 
+Next Steps (Actionable Roadmap)
+Now (0–2 days)
+- Voice wake/VAD: Add robust VAD with webrtcvad; optional wake keyword (“Hey Reachy”). Success: <300 ms trigger latency; <1% false positives in quiet room.
+- STT tuning: Optimize Whisper chunking and silence end-detection; cache model. Success: End-to-end speech → text in <2.5 s for 5 s utterance.
+- TTS stability: Confirm Piper playback path via `play_sound_from_file()` pauses camera reliably; add retry on device busy. Success: 100% playback without OpenCV errors across 10 trials.
+- UI polish: Voice panel status indicators (enabled/listening/loading), error toasts. Success: Clear feedback on model load and mic state.
+- Config: Introduce `.env` overrides for `REACHY_HOST`, `VOICE_ENABLED`, `MODEL_DIR`. Success: App reads overrides at startup.
+
+Next (1–2 weeks)
+- Command grammar: Map common voice intents to robot actions (look left/right, recenter, toggle wiggle, set motor mode). Files: `main.py` (intent router), `robot_controller.py`. Success: 10+ commands with confirmation and safety clamps.
+- GPU acceleration: Enable CUDA/DirectML for Whisper/Qwen3 where available or switch STT to `whisper-tiny.en` if CPU-only. Success: 40–60% latency reduction on supported hardware.
+- Process isolation: Run STT/LLM/TTS in a separate process to avoid blocking tracking; use IPC queues. Files: `voice_assistant.py`, new `voice_worker.py`. Success: No missed video frames during long generations.
+- Persistence: Save tuning + voice prefs to JSON; restore on startup. Files: `main.py`, `config.json`. Success: Settings survive restarts.
+- WebSocket telemetry: Stream status/candidates/voice events via WS; reduce polling. Files: `main.py`, `static/index.html`. Success: <200 ms UI update latency.
+
+Later (2–4+ weeks)
+- Wake word model: Integrate Porcupine/KWS for “Hey Reachy”. Success: <1% FAR, <5% FRR in household noise.
+- Multilingual: Add Whisper multilingual; Piper voice packs; language auto-detect. Success: English + one additional language end-to-end.
+- Skills & memory: Add long-term memory (SQLite) for facts and user preferences; skill plugins (reminders, jokes, facts). Success: 3+ skills with persistence.
+- Test suite & CI: Unit tests for VAD/STT/intent mapping; mocked SDK; GitHub Actions pipeline. Success: Green CI on PRs; 80% coverage on voice core.
+
+Acceptance Criteria (Top items)
+- Voice loop stability: No crashes across 30 minutes continuous use; recover after device errors without restart.
+- Latency: STT+LLM+TTS end-to-end <3.5 s on CPU for typical utterance (~5 s).
+- Robot safety: Intent routes clamp angles/speeds; manual mode required for hazardous moves.
+- UX clarity: UI reflects voice/mic/model state; logs show concise INFO/WARN/ERROR for voice pipeline.
+
+Dependencies & Risks
+- Model size (Qwen3 ~3 GB): consider smaller model fallback if RAM < 12 GB.
+- Piper availability on Windows: require PATH setup; provide Python binding fallback.
+- Microphone access conflicts: ensure exclusive device handling; backoff + retry.
+

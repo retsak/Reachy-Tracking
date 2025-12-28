@@ -534,6 +534,48 @@ class RobotController:
         # Use a background thread to avoid blocking
         threading.Thread(target=self._play_sound_sync, args=(filename,), daemon=True).start()
 
+        def play_sound_from_file(self, filepath: str):
+            """Play audio from an absolute file path (used for TTS output)"""
+            threading.Thread(target=self._play_audio_file, args=(filepath,), daemon=True).start()
+    
+        def _play_audio_file(self, filepath: str):
+            """Internal method to play audio from any file path"""
+            if not os.path.exists(filepath):
+                print(f"[AUDIO] File not found: {filepath}")
+                return
+        
+            print(f"[AUDIO] Playing from: {filepath}")
+        
+            # Pause camera reads to prevent OpenCV/SDK resource conflicts
+            self._pause_camera_reads = True
+            time.sleep(0.1)
+        
+            try:
+                from reachy_mini import ReachyMini as SDKReachyMini
+            
+                with SDKReachyMini(log_level="ERROR", media_backend="default") as mini:
+                    data, samplerate_in = sf.read(filepath, dtype="float32")
+                    output_rate = mini.media.get_output_audio_samplerate()
+                    if samplerate_in != output_rate:
+                        new_len = int(len(data) * (output_rate / samplerate_in))
+                        data = scipy.signal.resample(data, new_len)
+                    if data.ndim > 1:
+                        data = np.mean(data, axis=1)
+                    mini.media.start_playing()
+                    chunk_size = 1024
+                    for i in range(0, len(data), chunk_size):
+                        chunk = data[i : i + chunk_size]
+                        mini.media.push_audio_sample(chunk)
+                    time.sleep(0.5)
+                    mini.media.stop_playing()
+                    print(f"[AUDIO] Finished: {filepath}")
+            except Exception as e:
+                print(f"[AUDIO] Error playing file: {e}")
+            finally:
+                self._pause_camera_reads = False
+                self._reapply_camera_settings = True
+                time.sleep(0.1)
+
     def _play_sound_sync(self, filename: str):
         if not self.host:
              print("Cannot play sound: No host known.")
@@ -549,46 +591,38 @@ class RobotController:
             
         print(f"[AUDIO] Playing: {filename}")
         
-        # Pause camera reads to prevent OpenCV/SDK resource conflicts
-        self._pause_camera_reads = True
-        time.sleep(0.1)  # Give camera worker time to finish current read
+        # Don't pause camera - run audio in background
+        # The camera pause was causing video freeze issues
         
         try:
-            # ReachyMini SDK does not take 'host' arg, it uses Zenoh discovery.
-            # Using defaults as per user example (localhost_only=True by default).
+            # Reuse existing MediaManager instance instead of creating new one
+            if not self.mini:
+                print("[AUDIO] Error: MediaManager not available")
+                return
             
-            with SDKReachyMini(log_level="ERROR", media_backend="default") as mini:
-                data, samplerate_in = sf.read(file_path, dtype="float32")
+            data, samplerate_in = sf.read(file_path, dtype="float32")
 
-                # Resample if needed
-                output_rate = mini.media.get_output_audio_samplerate()
-                if samplerate_in != output_rate:
-                    # Calculate new length
-                    new_len = int(len(data) * (output_rate / samplerate_in))
-                    data = scipy.signal.resample(data, new_len)
-                
-                # Mono conversion
-                if data.ndim > 1:
-                    data = np.mean(data, axis=1)
+            # Resample if needed
+            output_rate = self.mini.media.get_output_audio_samplerate()
+            if samplerate_in != output_rate:
+                # Calculate new length
+                new_len = int(len(data) * (output_rate / samplerate_in))
+                data = scipy.signal.resample(data, new_len)
+            
+            # Mono conversion
+            if data.ndim > 1:
+                data = np.mean(data, axis=1)
 
-                mini.media.start_playing()
-                
-                chunk_size = 1024
-                for i in range(0, len(data), chunk_size):
-                    chunk = data[i : i + chunk_size]
-                    mini.media.push_audio_sample(chunk)
+            self.mini.media.start_playing()
+            
+            chunk_size = 1024
+            for i in range(0, len(data), chunk_size):
+                chunk = data[i : i + chunk_size]
+                self.mini.media.push_audio_sample(chunk)
 
-                time.sleep(1.0) 
-                mini.media.stop_playing()
-                print(f"[AUDIO] Finished: {filename}")
+            time.sleep(1.0) 
+            self.mini.media.stop_playing()
+            print(f"[AUDIO] Finished: {filename}")
                 
         except Exception as e:
             print(f"[AUDIO] Error playing sound: {e}")
-        finally:
-            # Always resume camera reads and re-apply settings
-            self._pause_camera_reads = False
-            self._reapply_camera_settings = True
-            time.sleep(0.1)  # Brief delay for settings to apply
-            self._pause_camera_reads = False
-            self._reapply_camera_settings = True
-            time.sleep(0.1)  # Brief delay for settings to apply

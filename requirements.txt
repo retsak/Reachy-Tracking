@@ -7,4 +7,12 @@ ultralytics
 pydantic
 reachy_mini
 soundfile
+sounddevice
 scipy
+faster-whisper
+transformers
+torch
+accelerate
+piper-tts
+webrtcvad
+silero-vad

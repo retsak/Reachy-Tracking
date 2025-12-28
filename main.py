@@ -16,6 +16,7 @@ import webbrowser
 from robot_controller import RobotController
 from detection_engine import DetectionEngine
 from simple_tracker import SimpleTracker
+from voice_assistant import get_assistant
 
 # Configure logging
 logging.basicConfig(
@@ -678,6 +679,118 @@ def shutdown():
         
     threading.Thread(target=kill_proc, daemon=True).start()
     return {"status": "shutting_down", "message": "System powering off..."}
+
+# Voice Assistant State
+VOICE_STATE = {
+    "enabled": False,
+    "listening": False,
+    "last_transcript": "",
+    "last_response": "",
+    "conversation_history": [],
+    "models": {},
+    "error": None
+}
+voice_assistant = None
+
+@app.post("/api/voice/enable")
+def enable_voice():
+    """Enable voice assistant"""
+    global voice_assistant, VOICE_STATE
+    try:
+        if voice_assistant is None:
+            voice_assistant = get_assistant(robot)
+            
+            # Setup callbacks
+            def on_speech(text):
+                VOICE_STATE["last_transcript"] = text
+                VOICE_STATE["conversation_history"].append({"role": "user", "content": text})
+            
+            def on_response(text):
+                VOICE_STATE["last_response"] = text
+                VOICE_STATE["conversation_history"].append({"role": "assistant", "content": text})
+            
+            voice_assistant.on_speech_detected = on_speech
+            voice_assistant.on_response_ready = on_response
+        
+        voice_assistant.start_listening()
+        # Snapshot model info (may update after lazy load)
+        try:
+            VOICE_STATE["models"] = voice_assistant.get_model_info()
+            VOICE_STATE["error"] = VOICE_STATE["models"].get("error")
+        except Exception:
+            pass
+        VOICE_STATE["enabled"] = True
+        VOICE_STATE["listening"] = True
+        logger.info("Voice assistant enabled")
+        return {"status": "ok", "voice_enabled": True}
+    except Exception as e:
+        logger.error(f"Failed to enable voice assistant: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/voice/disable")
+def disable_voice():
+    """Disable voice assistant"""
+    global voice_assistant, VOICE_STATE
+    if voice_assistant:
+        voice_assistant.stop_listening()
+        VOICE_STATE["enabled"] = False
+        VOICE_STATE["listening"] = False
+        logger.info("Voice assistant disabled")
+    return {"status": "ok", "voice_enabled": False}
+
+@app.get("/api/voice/status")
+def voice_status():
+    """Get voice assistant status"""
+    return VOICE_STATE
+
+@app.post("/api/voice/text_command")
+async def text_command(data: dict):
+    """Process a text command through the LLM"""
+    global voice_assistant
+    text = data.get("text", "")
+    
+    if not text:
+        return {"status": "error", "message": "No text provided"}
+    
+    try:
+        if voice_assistant is None:
+            voice_assistant = get_assistant(robot)
+        
+        response = voice_assistant.process_text_command(text)
+        
+        # Update history
+        VOICE_STATE["last_transcript"] = text
+        VOICE_STATE["last_response"] = response
+        VOICE_STATE["conversation_history"].append({"role": "user", "content": text})
+        VOICE_STATE["conversation_history"].append({"role": "assistant", "content": response})
+        
+        # Optionally speak the response
+        if data.get("speak", False):
+            voice_assistant.speak_text(response)
+        
+        return {"status": "ok", "response": response}
+    except Exception as e:
+        logger.error(f"Text command error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/voice/speak")
+async def speak_text(data: dict):
+    """Speak text directly via TTS"""
+    global voice_assistant
+    text = data.get("text", "")
+    
+    if not text:
+        return {"status": "error", "message": "No text provided"}
+    
+    try:
+        if voice_assistant is None:
+            voice_assistant = get_assistant(robot)
+        
+        voice_assistant.speak_text(text)
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error(f"TTS error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     logger.info("Starting server on port 8082...")

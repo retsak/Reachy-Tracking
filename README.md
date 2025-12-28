@@ -6,7 +6,7 @@ An autonomous tracking and control system for the Reachy robot, designed to dete
 
 -   **Autonomous Tracking**: Detects and centers on targets using the robot's head.
 -   **Hybrid Tracking Engine**:
-    -   **YOLOv8**: For object detection (Person, Cat).
+    -   **YOLOv8**: For object detection (Person, Cat). Model stored in `models/yolov8n.onnx`.
     -   **Haar Cascades**: For fast face detection.
     -   **Visual Tracking (KCF/CSRT)**: Locks onto targets for smooth following.
     -   **Ghosting Prevention**: Automatically resets tracking memory on robot movement.
@@ -27,7 +27,7 @@ An autonomous tracking and control system for the Reachy robot, designed to dete
 -   **Python 3.10+** (Python 3.11+ recommended, Python 3.12 tested on Windows).
 -   **Reachy Robot Daemon**: A running Reachy robot (real or simulated) with the SDK server accessible on `localhost:8000` (default) or configured host.
 -   **Camera**: USB camera (index 0 or 1) for video capture. DirectShow (Windows) or AVFoundation (macOS) backends supported.
--   `yolov8n.onnx` model (included in repository).
+-   **AI Models**: YOLOv8, Whisper, LLM, and Piper (download via `setup_model_assistant.py`).
 -   **Note for macOS Users**: System audio (CoreAudio) is used for playback; ensure audio device permissions are granted.
 
 ## Installation
@@ -130,28 +130,80 @@ If the robot daemon is on a different machine or port, update the `host` paramet
     
     The dashboard opens automatically on startup.
 
+## Models Directory
+
+- **Location**: All AI models and caches live in [models/](models/).
+- **Whisper**: Cache at [models/whisper](models/whisper) (faster-whisper base).
+- **LLM**: Cache at [models/llm](models/llm) (TinyLlama 1.1B Chat by default).
+- **Piper**: Voices at [models/piper](models/piper) (`.onnx` and `.json`).
+- **Containment**: No environment variables; everything is stored within the project.
+
+## Voice Assistant
+
+- **Stack**: STT (Faster-Whisper), LLM (TinyLlama or Qwen 0.5B), TTS (Piper).
+- **Caching**: Whisper uses local `download_root`; LLM uses local `cache_dir`; Piper reads voices from `models/piper`.
+- **Enable**: In the dashboard, click “🎤 Voice: Off” to start listening.
+- **Flow**: Listens → transcribes → generates → speaks (if a Piper voice is present).
+- **Status**: `/api/voice/status` returns voice state, `models` info, and any `error`.
+- **Commands**: POST `/api/voice/text_command` (optionally `speak: true`) or `/api/voice/speak`.
+
+## Setup Script (Recommended)
+
+- Use [setup_model_assistant.py](setup_model_assistant.py) to download all required models into `models/`.
+
+```powershell
+& ".\.venv\Scripts\Activate.ps1"
+python .\setup_model_assistant.py
+```
+
+- Downloads YOLOv8n ONNX into [models/yolov8n.onnx](models/yolov8n.onnx), Whisper base into [models/whisper](models/whisper), and TinyLlama 1.1B Chat into [models/llm](models/llm).
+- Place a Piper voice into [models/piper](models/piper) (e.g., `en_US-amy-medium.onnx` and its `.json`). Piper CLI is used if available in PATH.
+
+## Piper Voices
+
+- **Getting Voices**: Download a voice from rhasspy/piper releases and place `.onnx` + `.json` into [models/piper](models/piper).
+- **CLI**: Install Piper CLI (optional; required for TTS playback). Windows: follow rhasspy/piper instructions. macOS/Linux: `pip install piper-tts` or use packaged binaries.
+- **Runtime**: If no voice is present, TTS is skipped with a log message. Camera reads pause during audio playback to avoid resource conflicts.
+
 ## Troubleshooting
 
+
 ### Camera Issues
+
 - **Camera not detected**: Ensure USB camera is connected and accessible (index 0 or 1). Check `robot_controller.py` lines ~106-130 for camera initialization.
 - **Low FPS or lag**: Try lowering resolution or disabling auto-exposure in `robot_controller.py` (`_enforce_camera_config` method, line ~172).
 - **Camera conflict with audio**: The system pauses camera reads during audio playback to prevent OpenCV/SDK resource conflicts. If audio fails, check logs for OpenCV errors.
 
+
 ### Robot Connection Issues
+
 - **"Connecting to Robot..."**: Verify the daemon is running on `localhost:8000` or the configured host.
 - **Moves not executing**: Ensure motors are enabled ("Stiff" mode) and system is not paused.
 - **Manual control not available**: Manual control requires the system to be paused. Click "Pause" button in the dashboard.
 
+
 ### Detection/Tracking Issues
+
 - **No detections**: Check lighting and camera angle. Adjust `min_score_threshold` in tuning panel (default: 250).
 - **Jittery tracking**: Increase `command_interval` (default: 1.2s) to reduce move frequency.
 - **Target switching too often**: Lower `min_score_threshold` or adjust detection class priorities in `detection_engine.py`.
 
+
 ### Performance Issues
+
 - **High CPU usage**: YOLOv8 runs on CPU by default. Lower `detection_interval` (default: 0.2s = 5 Hz) or reduce camera resolution.
 - **Slow dashboard**: Lower `stream_fps_cap` in tuning panel (default: 60 FPS).
 
+
+### Voice/Model Issues
+
+- **First-run delays**: Models load on first use. Use the setup script to pre-download.
+- **Model selection**: Defaults to TinyLlama (CPU-friendly). Larger models are optional and may be slow/gated.
+- **Local storage**: All caches are confined to [models/](models/) inside the project—no environment variables or external paths needed.
+
+
 ### Logs
+
 - Structured logging is enabled by default. Check console output for `[INFO]`, `[WARNING]`, and `[ERROR]` messages.
 - Increase log verbosity by editing `logging.basicConfig(level=logging.DEBUG)` in `main.py` (line ~17).
 

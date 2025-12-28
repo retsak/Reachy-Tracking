@@ -9,7 +9,7 @@ class DetectionEngine:
         cv2.setNumThreads(0)
         
         # Paths to model
-        self.model_path = 'yolov8n.onnx'
+        self.model_path = 'models/yolov8n.onnx'
         
         # COCO Classes (YOLOv8 default)
         self.CLASSES = {
