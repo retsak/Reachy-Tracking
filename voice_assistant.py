@@ -65,8 +65,9 @@ class VoiceAssistant:
         # Conversation context
         self.conversation_history = []
         self.system_prompt = """You are Reachy, a friendly robot assistant.
-    Speak in plain English with 1–2 short sentences.
-    Be relevant to the user’s message and this robot context.
+    Answer the user's message directly and concisely (1–2 short sentences).
+    If the message is unclear, ask one brief clarifying question.
+    Do not invent facts; keep responses relevant to robot context.
     Never output code or markup; avoid repetition and filler."""
         
         # Callbacks
@@ -102,13 +103,20 @@ class VoiceAssistant:
             try:
                 from transformers import AutoTokenizer, AutoModelForCausalLM
                 import torch
+                import os
+                try:
+                    from huggingface_hub import HfFolder
+                except Exception:
+                    HfFolder = None
                 import platform
                 
                 # Prefer small but higher-quality CPU-friendly models (smallest first)
+                # Prefer Gemma 3 4B first as requested, then smaller fallbacks
                 fallbacks = [
-                    "Qwen/Qwen2.5-0.5B-Instruct",
+                    "google/gemma-3-4b-it",
                     "google/gemma-2-2b-it",
                     "microsoft/Phi-3-mini-4k-instruct",
+                    "Qwen/Qwen2.5-0.5B-Instruct",
                     "microsoft/Phi-3.5-mini-instruct",
                 ]
 
@@ -127,11 +135,21 @@ class VoiceAssistant:
 
                 last_error = None
                 selected = None
+                # Optional Hugging Face auth token for gated models (e.g., Gemma)
+                # Get HF token from env or saved CLI login
+                hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
+                if not hf_token and HfFolder is not None:
+                    try:
+                        hf_token = HfFolder.get_token()
+                    except Exception:
+                        hf_token = None
+                auth_kwargs = {"token": hf_token} if hf_token else {}
+
                 for model_name in fallbacks:
                     try:
                         logger.info(f"Loading LLM model: {model_name}...")
                         self._llm_tokenizer = AutoTokenizer.from_pretrained(
-                            model_name, trust_remote_code=True, cache_dir=str(self.llm_dir), use_fast=True
+                            model_name, trust_remote_code=True, cache_dir=str(self.llm_dir), use_fast=True, **auth_kwargs
                         )
                         self._llm_model = AutoModelForCausalLM.from_pretrained(
                             model_name,
@@ -139,7 +157,8 @@ class VoiceAssistant:
                             device_map=("auto" if self.device != "cpu" else "cpu"),
                             low_cpu_mem_usage=False,
                             trust_remote_code=True,
-                            cache_dir=str(self.llm_dir)
+                            cache_dir=str(self.llm_dir),
+                            **auth_kwargs
                         )
                         # Ensure model is on expected device
                         if self.device == "cpu":
@@ -408,26 +427,67 @@ class VoiceAssistant:
             
             # Format chat with system prompt
             messages = [{"role": "system", "content": self.system_prompt}] + self.conversation_history
-            
-            # Generate
-            text = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True
-            )
-            
-            inputs = tokenizer([text], return_tensors="pt")
+
+            # Build prompt using tokenizer chat template if available, else fallback
+            try:
+                if getattr(tokenizer, "chat_template", None):
+                    text = tokenizer.apply_chat_template(
+                        messages,
+                        tokenize=False,
+                        add_generation_prompt=True
+                    )
+                else:
+                    # Simple, consistent fallback format
+                    parts = [self.system_prompt.strip(), ""]
+                    for m in messages[1:]:
+                        role = m.get("role", "user").strip()
+                        content = m.get("content", "").strip()
+                        if role == "user":
+                            parts.append(f"User: {content}")
+                        elif role == "assistant":
+                            parts.append(f"Assistant: {content}")
+                        else:
+                            parts.append(content)
+                    parts.append("Assistant:")
+                    text = "\n".join(parts)
+            except Exception:
+                # As a last resort, ensure a minimal prompt
+                text = f"{self.system_prompt.strip()}\n\nUser: {user_text}\nAssistant:"
+
+            inputs = tokenizer(text, return_tensors="pt")
+
+            # Ensure inputs live on the same device as the model
+            try:
+                if hasattr(self, "device") and self.device != "cpu":
+                    for k in list(inputs.keys()):
+                        inputs[k] = inputs[k].to(self.device)
+            except Exception:
+                pass
             
             with torch.no_grad():
+                # Resolve token IDs robustly
+                eos_id = tokenizer.eos_token_id
+                if eos_id is None and hasattr(model, "config"):
+                    eos_id = getattr(model.config, "eos_token_id", None)
+                pad_id = tokenizer.pad_token_id
+                if pad_id is None and hasattr(model, "config"):
+                    pad_id = getattr(model.config, "pad_token_id", eos_id)
+
+                gen_kwargs = {
+                    "max_new_tokens": 40,
+                    "do_sample": False,
+                    "use_cache": False,
+                    "no_repeat_ngram_size": 2,
+                    "repetition_penalty": 1.2,
+                }
+                if eos_id is not None:
+                    gen_kwargs["eos_token_id"] = eos_id
+                if pad_id is not None:
+                    gen_kwargs["pad_token_id"] = pad_id
+
                 outputs = model.generate(
                     **inputs,
-                    max_new_tokens=40,
-                    do_sample=False,
-                    use_cache=False,
-                    eos_token_id=tokenizer.eos_token_id,
-                    pad_token_id=tokenizer.eos_token_id,
-                    no_repeat_ngram_size=3,
-                    repetition_penalty=1.2,
+                    **gen_kwargs,
                 )
             
             raw = tokenizer.decode(outputs[0][len(inputs.input_ids[0]):], skip_special_tokens=True)

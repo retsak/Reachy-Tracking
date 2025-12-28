@@ -18,6 +18,43 @@ YOLO_MODEL = MODELS_DIR / "yolov8n.onnx"
 for d in [MODELS_DIR, WHISPER_DIR, LLM_DIR, PIPER_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
+def _get_hf_token():
+    """Retrieve Hugging Face token from env or saved CLI login."""
+    try:
+        import os
+        from huggingface_hub import HfFolder
+        return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN") or HfFolder.get_token()
+    except Exception:
+        return None
+
+def _ensure_hf_auth_interactive():
+    """Attempt to run an interactive HF login if no token is present.
+    Falls back to printing guidance if CLI isn't available or user cancels.
+    """
+    token = _get_hf_token()
+    if token:
+        return token
+    print("\n⚠ Gemma access requires Hugging Face authentication.")
+    print("   Launching login prompt... (you can skip if you prefer)")
+    # Try new 'hf' CLI first, then legacy 'huggingface-cli'
+    for cmd in ([sys.executable, "-m", "pip", "show", "huggingface_hub"],
+                ["hf", "auth", "login"],
+                ["huggingface-cli", "login"],):
+        try:
+            subprocess.run(cmd, check=True)
+            break
+        except Exception:
+            continue
+    # Re-check token after attempted login
+    token = _get_hf_token()
+    if token:
+        print("✓ Hugging Face auth configured.")
+    else:
+        print("⚠ Hugging Face auth still missing. You can manually run:")
+        print("   - hf auth login   (or)   huggingface-cli login")
+        print("   And optionally set HF_TOKEN environment variable.")
+    return token
+
 def download_yolo_model():
     """Download YOLOv8n ONNX model if not present"""
     print("\n📥 Checking YOLOv8 model...")
@@ -75,14 +112,18 @@ def download_llm_model():
 
         # Prefer smaller, CPU-friendly models to reduce cold start and disk usage
         fallbacks = [
-            "Qwen/Qwen2.5-0.5B-Instruct",      # ~0.5B, very light
+            "google/gemma-3-4b-it",            # preferred
             "google/gemma-2-2b-it",            # ~2B, still reasonable
             "microsoft/Phi-3-mini-4k-instruct",# ~3B, capable
+            "Qwen/Qwen2.5-0.5B-Instruct",      # ~0.5B, very light
             "microsoft/Phi-3.5-mini-instruct", # larger (~5GB shards), last resort
             "TinyLlama/TinyLlama-1.1B-Chat-v1.0" # legacy fallback
         ]
 
         last_error = None
+        hf_token = _get_hf_token()
+        auth_kwargs = {"token": hf_token} if hf_token else {}
+
         for model_name in fallbacks:
             try:
                 print(f"Downloading tokenizer for: {model_name}...")
@@ -90,19 +131,46 @@ def download_llm_model():
                     model_name,
                     trust_remote_code=True,
                     cache_dir=str(LLM_DIR),
-                    use_fast=True
+                    use_fast=True,
+                    **auth_kwargs
                 )
                 print("Downloading model weights...")
                 _ = AutoModelForCausalLM.from_pretrained(
                     model_name,
                     trust_remote_code=True,
-                    cache_dir=str(LLM_DIR)
+                    cache_dir=str(LLM_DIR),
+                    **auth_kwargs
                 )
                 print(f"✓ LLM cached: {model_name}")
                 return True
             except Exception as e:
                 last_error = e
                 print(f"✗ Failed to cache {model_name}: {e}")
+                # If Gemma fails due to missing auth, try to login interactively once and retry this model
+                if model_name.startswith("google/gemma") and not hf_token:
+                    hf_token = _ensure_hf_auth_interactive() or hf_token
+                    auth_kwargs = {"token": hf_token} if hf_token else {}
+                    if hf_token:
+                        try:
+                            print(f"Retrying with auth: {model_name}...")
+                            _ = AutoTokenizer.from_pretrained(
+                                model_name,
+                                trust_remote_code=True,
+                                cache_dir=str(LLM_DIR),
+                                use_fast=True,
+                                **auth_kwargs
+                            )
+                            _ = AutoModelForCausalLM.from_pretrained(
+                                model_name,
+                                trust_remote_code=True,
+                                cache_dir=str(LLM_DIR),
+                                **auth_kwargs
+                            )
+                            print(f"✓ LLM cached: {model_name}")
+                            return True
+                        except Exception as e2:
+                            last_error = e2
+                            print(f"✗ Still unable to cache {model_name}: {e2}")
 
         print(f"✗ Error downloading LLMs: {last_error}")
         return False
@@ -175,6 +243,7 @@ def main():
         "faster-whisper",
         "transformers",
         "torch",
+        "huggingface-hub",
         "webrtcvad",
         "soundfile",
         "scipy",
@@ -192,6 +261,20 @@ def main():
         print("\n⚠ Some packages failed to install. Please install manually.")
         return False
     
+    # Check Hugging Face auth for gated models (e.g., Gemma)
+    try:
+        import os
+        from huggingface_hub import HfFolder
+        hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN") or HfFolder.get_token()
+        if hf_token:
+            print("\n✓ Hugging Face auth detected; gated models will be accessible.")
+        else:
+            print("\n⚠ No Hugging Face token found. If you need gated models like Gemma, run:")
+            print("   - huggingface-cli login   (or)   python -m huggingface_hub login")
+            print("   Then optionally set $env:HF_TOKEN for non-interactive environments.")
+    except Exception:
+        print("\n⚠ huggingface-hub not available; gated models may not be accessible.")
+
     # Download models
     print("\n2. Downloading AI models (into project-local cache)...")
     if not download_whisper_model():
