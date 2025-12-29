@@ -45,9 +45,13 @@ class RobotController:
         self.current_body_yaw = 0.0
         self.current_antenna_left = 0.0
         self.current_antenna_right = 0.0
+        
+        # Motion Overlays
+        self._speech_roll_offset = 0.0
+        self.current_base_roll = 0.0
 
         # Audio volume (0.0 - 1.0). Default 25%.
-        self.audio_volume = 0.25
+        self.audio_volume = 0.5
 
     def set_audio_volume(self, volume: float):
         """Set speaker volume (0.0 - 1.0)."""
@@ -181,13 +185,30 @@ class RobotController:
             cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            cap.set(cv2.CAP_PROP_FPS, 15) 
 
-            # Windows DirectShow: 0.25 requests auto exposure
+            # Platform-specific exposure settings
             if platform.system() == 'Windows':
+                # Windows DirectShow: 0.75=manual, 0.25=auto
+                cap.set(cv2.CAP_PROP_FPS, 15)
                 cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, self.win_exposure_mode)
                 cap.set(cv2.CAP_PROP_EXPOSURE, self.win_exposure_value)
                 cap.set(cv2.CAP_PROP_GAIN, self.win_gain)
+            elif platform.system() == 'Darwin':
+                # macOS AVFoundation: Lower FPS = longer exposure time = brighter image
+                cap.set(cv2.CAP_PROP_FPS, 10)  # Even lower for max exposure
+                
+                # Try to enable auto-exposure (3.0 = auto mode on many cameras)
+                cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3.0)
+                
+                # Boost brightness if supported
+                cap.set(cv2.CAP_PROP_BRIGHTNESS, 0.6)
+                
+                # Some cameras support these on Mac
+                cap.set(cv2.CAP_PROP_GAIN, 15.0)
+                
+                print("[CAMERA] macOS: Forced 10 FPS + auto exposure for brightness")
+            else:
+                cap.set(cv2.CAP_PROP_FPS, 15)
 
             # Read back and, if the driver ignored settings, try once more at 640x480/15
             try:
@@ -197,7 +218,7 @@ class RobotController:
                 if w > 640 or h > 480 or fps > 20:
                     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                    cap.set(cv2.CAP_PROP_FPS, 15)
+                    cap.set(cv2.CAP_PROP_FPS, 10 if platform.system() == 'Darwin' else 15)
             except Exception:
                 pass
         except Exception as eobj:
@@ -226,6 +247,11 @@ class RobotController:
                             frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
                         elif frame.shape[2] == 2:
                             frame = cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_YUY2)
+                    
+                    # SOFTWARE BRIGHTNESS BOOST for macOS (camera ignores hardware settings)
+                    if platform.system() == 'Darwin':
+                        # Boost brightness by 1.8x and add exposure compensation
+                        frame = cv2.convertScaleAbs(frame, alpha=1.8, beta=40)
                     
                     with self._camera_lock:
                         self._latest_camera_frame = frame
@@ -362,19 +388,46 @@ class RobotController:
                 # This fixes the "snapping" bug by remembering where we told it to go
                 self.current_body_yaw = target_body_yaw
                 self.current_pitch = target_pitch
-                self.current_roll = 0.0
+                self.current_body_yaw = target_body_yaw
+                self.current_pitch = target_pitch
+                self.current_roll = 0.0 # This is base roll logic?
+                self.current_base_roll = 0.0
                 # self.current_yaw keeps track of head relative to body? 
                 # In this logic current_yaw is treated as head position.
                 self.current_yaw = target_head_yaw
         except:
             pass
             
-    def set_pose(self, head_yaw, head_pitch, head_roll, body_yaw, antenna_left, antenna_right, duration=2.0):
+    def set_pose(self, head_yaw=None, head_pitch=None, head_roll=None, body_yaw=None, antenna_left=None, antenna_right=None, duration=2.0):
         """Enqueue absolute pose command for Manual Control."""
         self.command_queue.put((self._set_pose_sync, (head_yaw, head_pitch, head_roll, body_yaw, antenna_left, antenna_right, duration)))
     
     def _set_pose_sync(self, h_yaw, h_pitch, h_roll, b_yaw, a_left, a_right, duration):
         """Execute absolute move."""
+        # Use current state for missing values
+        if h_yaw is None: h_yaw = self.current_yaw
+        if h_pitch is None: h_pitch = self.current_pitch
+        
+        # Base Roll Management
+        if h_roll is not None:
+            # explicit update (from tracking or manual) -> update base
+            self.current_base_roll = h_roll
+        else:
+            # implicit update -> use existing base
+            h_roll = self.current_base_roll
+            
+        if b_yaw is None: b_yaw = self.current_body_yaw
+        if a_left is None: a_left = self.current_antenna_left
+        if a_right is None: a_right = self.current_antenna_right
+
+        # Apply Speech Offset to Base
+        # We store the *Physical* roll in current_roll for reference, but use Base for logic
+        physical_roll = h_roll + self._speech_roll_offset
+        # Update internal "Physical" state to match what we send
+        self.current_roll = physical_roll
+        
+        # Override h_roll for sending
+        h_roll = physical_roll
         if not self.base_url:
             return 
             
@@ -561,6 +614,9 @@ class RobotController:
         print(f"[AUDIO] Playing from: {filepath}")
         tempdir = os.path.abspath(tempfile.gettempdir())
         is_temp_file = os.path.abspath(filepath).startswith(tempdir)
+        
+        # Mark camera for settings reapplication before and after audio
+        self._reapply_camera_settings = True
 
         # Try multiple times with increasing timeouts
         for attempt in range(3):
@@ -585,6 +641,39 @@ class RobotController:
                     except Exception:
                         pass
 
+                    # Start Speaking Motion
+                    self._is_speaking = True
+                    self._speech_roll_offset = 0.0
+
+                    def motion_thread():
+                        # Simple alternating sway for gentle, continuous motion
+                        direction = 1
+                        while self._is_speaking:
+                            # +/- 0.375 degrees offset
+                            target_offset = 0.375 * direction
+                            
+                            # Set offset immediately (no manual interpolation)
+                            self._speech_roll_offset = target_offset
+                            
+                            # Push update with LONG duration for smoothness
+                            try:
+                                self.set_pose(duration=1.5) 
+                            except: pass
+                            
+                            # Wait for motion
+                            for _ in range(15): # 1.5s
+                                if not self._is_speaking: break
+                                time.sleep(0.1)
+                            
+                            direction *= -1
+
+                        # Reset gently
+                        self._speech_roll_offset = 0.0
+                        try: self.set_pose(duration=2.0)
+                        except: pass
+
+                    threading.Thread(target=motion_thread, daemon=True).start()
+
                     mini.media.start_playing()
                     print(f"[AUDIO] Playing {len(data)} samples...")
                     # Push samples in chunks
@@ -595,8 +684,13 @@ class RobotController:
 
                     # Wait for playback to complete
                     time.sleep(len(data) / float(output_rate) + 0.5)
+                    self._is_speaking = False # Stop motion
                     mini.media.stop_playing()
                     print(f"[AUDIO] Finished: {filepath}")
+                    
+                    # Trigger camera settings reapplication after audio
+                    self._reapply_camera_settings = True
+                    
                     # Delete temporary file if it was created by TTS
                     if is_temp_file:
                         try:
@@ -628,6 +722,71 @@ class RobotController:
                     except Exception as de:
                         print(f"[AUDIO] Temp delete failed: {de}")
 
+    # --- EMOTIVE MOTIONS ---
+    def trigger_emotion(self, emotion_name: str):
+        """Trigger a predefined emotion trajectory in a non-blocking thread."""
+        def run_emotion():
+            print(f"[EMOTION] Playing: {emotion_name}")
+            
+            # Helper to reset to neutral
+            def reset(dur=1.0):
+                self.set_pose(
+                    head_roll=0.0, 
+                    head_pitch=0.0, 
+                    head_yaw=0.0, 
+                    antenna_left=0.0, 
+                    antenna_right=0.0, 
+                    duration=dur
+                )
+
+            if emotion_name == "happy":
+                # Quick antenna wiggles + head tilt
+                self.set_pose(head_roll=0.3, head_pitch=-0.2, antenna_left=30, antenna_right=-30, duration=0.4)
+                time.sleep(0.4)
+                self.set_pose(head_roll=-0.3, antenna_left=-30, antenna_right=30, duration=0.4)
+                time.sleep(0.4)
+                self.set_pose(head_roll=0.3, antenna_left=30, antenna_right=-30, duration=0.4)
+                time.sleep(0.4)
+                self.set_pose(head_roll=0.0, antenna_left=0.0, antenna_right=0.0, duration=0.5)
+
+            elif emotion_name == "sad":
+                # Head down, antennas droop
+                self.set_pose(head_pitch=30.0, antenna_left=50.0, antenna_right=50.0, duration=1.5)
+                time.sleep(2.0)
+                reset(2.0)
+
+            elif emotion_name == "no":
+                # Shake head (Yaw)
+                mag = 10.0 # degrees
+                speed = 0.4
+                self.set_pose(head_yaw=mag, duration=speed)
+                time.sleep(speed)
+                self.set_pose(head_yaw=-mag, duration=speed)
+                time.sleep(speed)
+                self.set_pose(head_yaw=mag, duration=speed)
+                time.sleep(speed)
+                self.set_pose(head_yaw=0.0, duration=0.5)
+
+            elif emotion_name == "yes":
+                # Nod head (Pitch)
+                mag = 7.5 # degrees
+                speed = 0.4
+                self.set_pose(head_pitch=mag, duration=speed)
+                time.sleep(speed)
+                self.set_pose(head_pitch=-2.5, duration=speed)
+                time.sleep(speed)
+                self.set_pose(head_pitch=mag, duration=speed)
+                time.sleep(speed)
+                self.set_pose(head_pitch=0.0, duration=0.5)
+
+            elif emotion_name == "confused":
+                # Head tilt + one antenna up
+                self.set_pose(head_roll=0.4, head_pitch=-0.1, antenna_left=40.0, antenna_right=-10.0, duration=1.0)
+                time.sleep(2.0)
+                reset(1.0)
+
+        threading.Thread(target=run_emotion, daemon=True).start()
+
     def _play_sound_sync(self, filename: str):
         if not self.host:
             print("Cannot play sound: No host known.")
@@ -642,6 +801,9 @@ class RobotController:
             return
 
         print(f"[AUDIO] Playing: {filename}")
+        
+        # Mark camera for settings reapplication before and after audio
+        self._reapply_camera_settings = True
 
         # Try multiple times with increasing timeouts
         for attempt in range(3):
@@ -680,6 +842,10 @@ class RobotController:
                     time.sleep(len(data) / float(output_rate) + 0.5)
                     mini.media.stop_playing()
                     print(f"[AUDIO] Finished: {filename}")
+                    
+                    # Trigger camera settings reapplication after audio
+                    self._reapply_camera_settings = True
+                    
                     return  # Success
             except TimeoutError:
                 if attempt < 2:

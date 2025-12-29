@@ -128,6 +128,18 @@
                         </div>
 
                         <div class="control-group">
+                            <h4>Emotions</h4>
+                            <div class="quick-actions" style="grid-template-columns: repeat(5, 1fr); gap: 4px;">
+                                <button onclick="triggerEmotion('yes')" class="action-btn" title="Yes">👍</button>
+                                <button onclick="triggerEmotion('no')" class="action-btn" title="No">👎</button>
+                                <button onclick="triggerEmotion('happy')" class="action-btn" title="Happy">😄</button>
+                                <button onclick="triggerEmotion('sad')" class="action-btn" title="Sad">😢</button>
+                                <button onclick="triggerEmotion('confused')" class="action-btn"
+                                    title="Confused">😕</button>
+                            </div>
+                        </div>
+
+                        <div class="control-group">
                             <h4>Voice Volume</h4>
                             <div class="slider-row">
                                 <div class="slider-label"><span>Level</span><span class="slider-val"
@@ -246,6 +258,16 @@
         $('wiggle-btn').onclick = async () => {
             await fetch('/api/toggle_wiggle', { method: 'POST' });
         };
+
+        async function triggerEmotion(emotion) {
+            try {
+                await fetch('/api/emote', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ emotion })
+                });
+            } catch (e) { console.error(e); }
+        }
 
         $('voice-btn').onclick = async () => {
             const ep = voiceEnabled ? '/api/voice/disable' : '/api/voice/enable';

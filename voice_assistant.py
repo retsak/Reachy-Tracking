@@ -65,10 +65,15 @@ class VoiceAssistant:
         # Conversation context
         self.conversation_history = []
         self.system_prompt = """You are Reachy, a friendly robot assistant.
-    Answer the user's message directly and concisely (1–2 short sentences).
-    If the message is unclear, ask one brief clarifying question.
-    Do not invent facts; keep responses relevant to robot context.
-    Never output code or markup; avoid repetition and filler."""
+
+CRITICAL: Always remember and reference the conversation history above. If the user mentioned something earlier (like weather, names, topics), recall it naturally.
+
+Rules:
+- Answer directly and concisely (1-2 short sentences)
+- If the user refers to something they said before, acknowledge it
+- If unclear, ask one brief clarifying question
+- Never invent facts; keep responses relevant
+- Never output code or markup"""
         
         # Callbacks
         self.on_speech_detected: Optional[Callable[[str], None]] = None
@@ -79,6 +84,22 @@ class VoiceAssistant:
         self._process_thread = None
         
         logger.info("VoiceAssistant initialized")
+
+    def preload_models(self):
+        """Preload models in a background thread to avoid latency on first use."""
+        def _load():
+            try:
+                logger.info("[PRELOAD] Starting model preload in background...")
+                self._load_whisper()
+                self._load_piper()
+                self._load_llm()
+                logger.info("[PRELOAD] All models preloaded successfully.")
+            except Exception as e:
+                logger.error(f"[PRELOAD] Background preload failed: {e}")
+
+        # Only start if not already loaded/loading
+        if not (self._llm_model and self._whisper_model):
+            threading.Thread(target=_load, daemon=True).start()
     
     def _load_whisper(self):
         """Load Whisper model for STT"""
@@ -471,38 +492,54 @@ class VoiceAssistant:
             # Build conversation
             self.conversation_history.append({"role": "user", "content": user_text})
             
-            # Keep last 6 messages for context
-            if len(self.conversation_history) > 6:
-                self.conversation_history = self.conversation_history[-6:]
+            # Keep last 8 messages (4 exchanges) for context
+            if len(self.conversation_history) > 8:
+                self.conversation_history = self.conversation_history[-8:]
             
-            # Format chat with system prompt
-            messages = [{"role": "system", "content": self.system_prompt}] + self.conversation_history
+            # DEBUG: Log conversation context being sent to LLM
+            logger.info(f"[LLM CONTEXT] Sending {len(self.conversation_history)} messages to LLM:")
+            for i, msg in enumerate(self.conversation_history):
+                logger.info(f"  [{i}] {msg['role']}: {msg['content'][:50]}...")
+            
+            # Format: Inject history into SYSTEM PROMPT to force memory
+            # This is more robust than chat templates for small/finicky models
+            
+            context_str = ""
+            if len(self.conversation_history) > 1:
+                context_str = "\n\n=== RECENT CONVERSATION LOG (YOU MUST REMEMBER THIS) ===\n"
+                for m in self.conversation_history[:-1]: # All except current
+                    r = m.get("role", "user").upper()
+                    c = m.get("content", "")
+                    context_str += f"{r}: {c}\n"
+                context_str += "=== END LOG ===\n"
 
-            # Build prompt using tokenizer chat template if available, else fallback
+            # Combine static system prompt + dynamic context
+            full_system_prompt = self.system_prompt + context_str
+            
+            # Current message
+            current_user_text = self.conversation_history[-1]["content"]
+
+            # Construct simple messages list for tokenizer (if it supports it)
+            # or manual string build
+            
+            messages_for_token = [
+                {"role": "system", "content": full_system_prompt},
+                {"role": "user", "content": current_user_text}
+            ]
+
+            # Build prompt using tokenizer chat template if available
             try:
                 if getattr(tokenizer, "chat_template", None):
                     text = tokenizer.apply_chat_template(
-                        messages,
+                        messages_for_token,
                         tokenize=False,
                         add_generation_prompt=True
                     )
                 else:
-                    # Simple, consistent fallback format
-                    parts = [self.system_prompt.strip(), ""]
-                    for m in messages[1:]:
-                        role = m.get("role", "user").strip()
-                        content = m.get("content", "").strip()
-                        if role == "user":
-                            parts.append(f"User: {content}")
-                        elif role == "assistant":
-                            parts.append(f"Assistant: {content}")
-                        else:
-                            parts.append(content)
-                    parts.append("Assistant:")
-                    text = "\n".join(parts)
+                    # Manual format
+                    text = f"{full_system_prompt}\n\nUSER: {current_user_text}\nASSISTANT:"
             except Exception:
-                # As a last resort, ensure a minimal prompt
-                text = f"{self.system_prompt.strip()}\n\nUser: {user_text}\nAssistant:"
+                 text = f"{full_system_prompt}\n\nUSER: {current_user_text}\nASSISTANT:"
 
             inputs = tokenizer(text, return_tensors="pt")
 

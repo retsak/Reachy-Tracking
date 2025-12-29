@@ -414,7 +414,18 @@ def video_stream_loop():
                     
                     # Play Sound (Only once per session)
                     if not has_greeted_session:
-                        robot.play_sound("What Can I Do For You.wav")
+                        # Use TTS instead of static WAV
+                        # Running in thread to avoid blocking video stream
+                        try:
+                            def say_hello():
+                                assistant = get_assistant(robot)
+                                if assistant:
+                                    assistant.speak_text("Hello! I am Reachy. How can I help you today?")
+                            
+                            threading.Thread(target=say_hello, daemon=True).start()
+                        except Exception:
+                            pass
+
                         has_greeted_session = True
             
             target_present = True
@@ -586,6 +597,13 @@ def toggle_wiggle():
     SERVER_STATE["wiggle_enabled"] = not SERVER_STATE["wiggle_enabled"]
     return {"status": "ok", "wiggle_enabled": SERVER_STATE["wiggle_enabled"]}
 
+@app.post("/api/emote")
+async def api_emote(payload: dict):
+    emotion = payload.get("emotion", "happy")
+    print(f"[API] Emote request: {emotion}")
+    robot.trigger_emotion(emotion)
+    return {"status": "ok", "emotion": emotion}
+
 from pydantic import BaseModel
 
 class ManualControlRequest(BaseModel):
@@ -690,7 +708,7 @@ VOICE_STATE = {
     "conversation_history": [],
     "models": {},
     "error": None,
-    "volume": 25,
+    "volume": 50,
 }
 voice_assistant = None
 
@@ -750,7 +768,7 @@ def set_voice_volume(data: dict):
     """Set speaker volume percentage (0-100)."""
     global VOICE_STATE, robot
     try:
-        vol = int(data.get("volume", 25))
+        vol = int(data.get("volume", 50))
         vol = max(0, min(100, vol))
         VOICE_STATE["volume"] = vol
         # Apply to robot controller (0.0 - 1.0)
@@ -818,6 +836,15 @@ if __name__ == "__main__":
     logger.info("Use http://localhost:8082/ to access the web interface.")
     webbrowser.open("http://localhost:8082/")    
     robot.connect()
+    
+    # Preload AI models in background to avoid delay on first chat
+    try:
+        logger.info("Triggering background model load...")
+        va = get_assistant(robot)
+        va.preload_models()
+    except Exception as e:
+        logger.error(f"Failed to start model preload: {e}")
+
     threading.Thread(target=detection_loop, daemon=True).start()
     threading.Thread(target=connection_monitor_loop, daemon=True).start()
     threading.Thread(target=video_stream_loop, daemon=True).start()
