@@ -211,6 +211,22 @@ body {
     gap: 20px;
 }
 
+.emotion-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+}
+
+.emotion-actions .action-btn {
+    justify-content: center;
+}
+
+.voice-controls {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+
 .control-group h4 {
     font-size: 11px;
     text-transform: uppercase;

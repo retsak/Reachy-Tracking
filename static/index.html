@@ -31,7 +31,7 @@
             <div class="panel-title">Quick Actions</div>
             <div class="panel-content">
                 <div class="action-list">
-                    <button class="action-btn active" id="wiggle-btn">
+                    <button class="action-btn" id="wiggle-btn">
                         <span class="icon">🎭</span> Wiggle Mode
                     </button>
                     <button class="action-btn" id="pause-btn">
@@ -83,19 +83,20 @@
             <!-- Manual Controls -->
             <div class="panel controls-panel">
                 <div class="panel-title">Manual Control</div>
-                <div class="panel-content" id="manual-overlay" style="opacity:0.4; pointer-events:none;">
-                    <div class="control-grid">
+                <div class="panel-content">
+                    <div id="manual-overlay" style="opacity:0.4; pointer-events:none;">
+                        <div class="control-grid">
                         <div class="control-group">
                             <h4>Antennas</h4>
                             <div class="slider-row">
                                 <div class="slider-label"><span>Left</span><span class="slider-val"
                                         id="val-ant-l">0°</span></div>
-                                <input type="range" id="ant-l" min="-90" max="90" value="0">
+                                <input type="range" id="ant-l" min="-180" max="180" value="0">
                             </div>
                             <div class="slider-row">
                                 <div class="slider-label"><span>Right</span><span class="slider-val"
                                         id="val-ant-r">0°</span></div>
-                                <input type="range" id="ant-r" min="-90" max="90" value="0">
+                                <input type="range" id="ant-r" min="-180" max="180" value="0">
                             </div>
                         </div>
 
@@ -129,21 +130,23 @@
 
                         <div class="control-group">
                             <h4>Emotions</h4>
-                            <div class="quick-actions" style="grid-template-columns: repeat(5, 1fr); gap: 4px;">
+                            <div class="emotion-actions">
                                 <button onclick="triggerEmotion('yes')" class="action-btn" title="Yes">👍</button>
                                 <button onclick="triggerEmotion('no')" class="action-btn" title="No">👎</button>
                                 <button onclick="triggerEmotion('happy')" class="action-btn" title="Happy">😄</button>
                                 <button onclick="triggerEmotion('sad')" class="action-btn" title="Sad">😢</button>
-                                <button onclick="triggerEmotion('confused')" class="action-btn"
-                                    title="Confused">😕</button>
+                                <button onclick="triggerEmotion('confused')" class="action-btn" title="Confused">😕</button>
                             </div>
                         </div>
+                        </div>
+                    </div>
 
+                    <!-- Voice controls should stay usable even when manual control is off -->
+                    <div class="voice-controls">
                         <div class="control-group">
                             <h4>Voice Volume</h4>
                             <div class="slider-row">
-                                <div class="slider-label"><span>Level</span><span class="slider-val"
-                                        id="volume-val">50%</span></div>
+                                <div class="slider-label"><span>Level</span><span class="slider-val" id="volume-val">50%</span></div>
                                 <input type="range" id="volume-slider" min="0" max="100" value="50">
                             </div>
                         </div>
@@ -193,7 +196,7 @@
 
     <script>
         const $ = id => document.getElementById(id);
-        let isPaused = false, voiceEnabled = false, wiggleEnabled = true;
+        let isPaused = false, voiceEnabled = false, wiggleEnabled = false;
 
         // ══════════════════════════════════════
         // CHAT
@@ -315,10 +318,10 @@
                 body: JSON.stringify({
                     antenna_left: +$('ant-l').value,
                     antenna_right: +$('ant-r').value,
-                    head_yaw: +$('head-y').value * Math.PI / 180,
-                    head_pitch: +$('head-p').value * Math.PI / 180,
-                    head_roll: +$('head-r').value * Math.PI / 180,
-                    body_yaw: +$('body-y').value * Math.PI / 180
+                    head_yaw: +$('head-y').value,
+                    head_pitch: +$('head-p').value,
+                    head_roll: +$('head-r').value,
+                    body_yaw: +$('body-y').value
                 })
             });
         }

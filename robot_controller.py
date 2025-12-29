@@ -48,7 +48,13 @@ class RobotController:
         
         # Motion Overlays
         self._speech_roll_offset = 0.0
+        self._speech_pitch_offset = 0.0
+        self._speech_antenna_left_offset = 0.0   # degrees (RAW)
+        self._speech_antenna_right_offset = 0.0  # degrees (RAW)
         self.current_base_roll = 0.0
+        self.current_base_pitch = 0.0
+        self.current_base_antenna_left = 0.0
+        self.current_base_antenna_right = 0.0
 
         # Audio volume (0.0 - 1.0). Default 25%.
         self.audio_volume = 0.5
@@ -399,14 +405,34 @@ class RobotController:
             pass
             
     def set_pose(self, head_yaw=None, head_pitch=None, head_roll=None, body_yaw=None, antenna_left=None, antenna_right=None, duration=2.0):
-        """Enqueue absolute pose command for Manual Control."""
-        self.command_queue.put((self._set_pose_sync, (head_yaw, head_pitch, head_roll, body_yaw, antenna_left, antenna_right, duration)))
+        """
+        Enqueue absolute pose command for Manual Control.
+        INPUTS MUST BE IN DEGREES. They will be converted to Radians.
+        """
+        # Convert Degrees to Radians for all Angle inputs
+        def to_rad(v): return np.deg2rad(v) if v is not None else None
+        
+        args = (
+            to_rad(head_yaw), 
+            to_rad(head_pitch), 
+            to_rad(head_roll), 
+            to_rad(body_yaw), 
+            antenna_left,  # RAW (Degrees)
+            antenna_right, # RAW (Degrees)
+            duration
+        )
+        self.command_queue.put((self._set_pose_sync, args))
     
     def _set_pose_sync(self, h_yaw, h_pitch, h_roll, b_yaw, a_left, a_right, duration):
         """Execute absolute move."""
         # Use current state for missing values
         if h_yaw is None: h_yaw = self.current_yaw
-        if h_pitch is None: h_pitch = self.current_pitch
+        
+        # Base Pitch Management (prevents drift when overlays are applied)
+        if h_pitch is not None:
+            self.current_base_pitch = h_pitch
+        else:
+            h_pitch = self.current_base_pitch
         
         # Base Roll Management
         if h_roll is not None:
@@ -415,25 +441,44 @@ class RobotController:
         else:
             # implicit update -> use existing base
             h_roll = self.current_base_roll
+
+        # Base Antenna Management (RAW degrees)
+        if a_left is not None:
+            self.current_base_antenna_left = a_left
+        else:
+            a_left = self.current_base_antenna_left
+
+        if a_right is not None:
+            self.current_base_antenna_right = a_right
+        else:
+            a_right = self.current_base_antenna_right
             
         if b_yaw is None: b_yaw = self.current_body_yaw
-        if a_left is None: a_left = self.current_antenna_left
-        if a_right is None: a_right = self.current_antenna_right
 
         # Apply Speech Offset to Base
         # We store the *Physical* roll in current_roll for reference, but use Base for logic
         physical_roll = h_roll + self._speech_roll_offset
+        physical_pitch = h_pitch + self._speech_pitch_offset
+        physical_antenna_left = a_left + self._speech_antenna_left_offset
+        physical_antenna_right = a_right + self._speech_antenna_right_offset
         # Update internal "Physical" state to match what we send
         self.current_roll = physical_roll
+        self.current_pitch = physical_pitch
+        self.current_antenna_left = physical_antenna_left
+        self.current_antenna_right = physical_antenna_right
         
         # Override h_roll for sending
         h_roll = physical_roll
+        h_pitch = physical_pitch
+        a_left = physical_antenna_left
+        a_right = physical_antenna_right
         if not self.base_url:
             return 
             
         try:
              # Update internal state
             self.current_roll = h_roll
+            self.current_pitch = h_pitch
             self.current_body_yaw = b_yaw
             self.current_antenna_left = a_left
             self.current_antenna_right = a_right
@@ -494,6 +539,9 @@ class RobotController:
                  if "head_pose" in state and state["head_pose"]:
                      hp = state["head_pose"]
                      self.current_pitch = float(hp.get("pitch", self.current_pitch))
+                     # Don't let speech overlays drift the base pose.
+                     if not getattr(self, "_is_speaking", False):
+                         self.current_base_pitch = self.current_pitch
                      self.current_roll = float(hp.get("roll", self.current_roll))
                      self.current_yaw = float(hp.get("yaw", self.current_yaw))
                  
@@ -507,6 +555,11 @@ class RobotController:
                      if len(ants) >= 2:
                          self.current_antenna_left = np.rad2deg(float(ants[0]))
                          self.current_antenna_right = np.rad2deg(float(ants[1]))
+                         # During speech, the physical antennas include an overlay offset.
+                         # Never copy that into base, or offsets will accumulate.
+                         if not getattr(self, "_is_speaking", False):
+                             self.current_base_antenna_left = self.current_antenna_left
+                             self.current_base_antenna_right = self.current_antenna_right
                  
         except Exception:
             pass
@@ -549,7 +602,7 @@ class RobotController:
             try:
                 with ReachyMini(self.host) as mini:
                     mini.goto_target(
-                        antennas=np.deg2rad([l_deg, r_deg]),
+                        antennas=[l_deg, r_deg], # RAW
                         duration=duration,
                         method="minjerk"
                     )
@@ -558,10 +611,12 @@ class RobotController:
 
         try:
             # Slower, gentler wiggle
+            # Amplitude scaled down (10x less) to avoid excessive motion.
+            wiggle_scale = 0.1
             for _ in range(2):
-                move_antennas(30, -30, 0.4)
+                move_antennas(3 * wiggle_scale, -3 * wiggle_scale, 0.4)
                 time.sleep(0.4)
-                move_antennas(-10, 10, 0.4)
+                move_antennas(-2 * wiggle_scale, 2 * wiggle_scale, 0.4)
                 time.sleep(0.4)
             move_antennas(0, 0, 0.6)
         except:
@@ -644,20 +699,36 @@ class RobotController:
                     # Start Speaking Motion
                     self._is_speaking = True
                     self._speech_roll_offset = 0.0
+                    self._speech_pitch_offset = 0.0
+                    self._speech_antenna_left_offset = 0.0
+                    self._speech_antenna_right_offset = 0.0
 
                     def motion_thread():
-                        # Simple alternating sway for gentle, continuous motion
+                        # Confused-like head tilt, alternating left/right while speaking.
+                        # Antennas also animate, but with reduced amplitude.
+                        tilt_deg = 20.0
+                        pitch_deg = -5.0
+                        ant_up = 60.0
+                        ant_down = -15.0
                         direction = 1
                         while self._is_speaking:
-                            # +/- 0.375 degrees offset
-                            target_offset = 0.375 * direction
+                            roll_offset_rad = np.deg2rad(tilt_deg) * direction
+                            pitch_offset_rad = np.deg2rad(pitch_deg)
                             
-                            # Set offset immediately (no manual interpolation)
-                            self._speech_roll_offset = target_offset
+                            # Set offset (RADIANS)
+                            self._speech_roll_offset = roll_offset_rad
+                            self._speech_pitch_offset = pitch_offset_rad
+
+                            if direction > 0:
+                                self._speech_antenna_left_offset = ant_up
+                                self._speech_antenna_right_offset = ant_down
+                            else:
+                                self._speech_antenna_left_offset = ant_down
+                                self._speech_antenna_right_offset = ant_up
                             
                             # Push update with LONG duration for smoothness
                             try:
-                                self.set_pose(duration=1.5) 
+                                self.set_pose(duration=1.5)
                             except: pass
                             
                             # Wait for motion
@@ -669,7 +740,13 @@ class RobotController:
 
                         # Reset gently
                         self._speech_roll_offset = 0.0
-                        try: self.set_pose(duration=2.0)
+                        self._speech_pitch_offset = 0.0
+                        self._speech_antenna_left_offset = 0.0
+                        self._speech_antenna_right_offset = 0.0
+                        # Explicitly return antennas to 0 at the end of speech.
+                        # (Head/body return to their base pose.)
+                        try:
+                            self.set_pose(antenna_left=0.0, antenna_right=0.0, duration=2.0)
                         except: pass
 
                     threading.Thread(target=motion_thread, daemon=True).start()
@@ -740,24 +817,27 @@ class RobotController:
                 )
 
             if emotion_name == "happy":
-                # Quick antenna wiggles + head tilt
-                self.set_pose(head_roll=0.3, head_pitch=-0.2, antenna_left=30, antenna_right=-30, duration=0.4)
+                # Quick antenna wiggles + head tilt (DEGREES/RAW)
+                # Head: Radians (converted in set_pose). Antennas: RAW.
+                # Scaling Antennas: 30 -> 150 (x5)
+                self.set_pose(head_roll=20, head_pitch=-10, antenna_left=150, antenna_right=-150, duration=0.4)
                 time.sleep(0.4)
-                self.set_pose(head_roll=-0.3, antenna_left=-30, antenna_right=30, duration=0.4)
+                self.set_pose(head_roll=-20, antenna_left=-150, antenna_right=150, duration=0.4)
                 time.sleep(0.4)
-                self.set_pose(head_roll=0.3, antenna_left=30, antenna_right=-30, duration=0.4)
+                self.set_pose(head_roll=20, antenna_left=150, antenna_right=-150, duration=0.4)
                 time.sleep(0.4)
-                self.set_pose(head_roll=0.0, antenna_left=0.0, antenna_right=0.0, duration=0.5)
+                reset(0.5)
 
             elif emotion_name == "sad":
                 # Head down, antennas droop
-                self.set_pose(head_pitch=30.0, antenna_left=50.0, antenna_right=50.0, duration=1.5)
+                # 50 -> 250
+                self.set_pose(head_pitch=30.0, antenna_left=250.0, antenna_right=250.0, duration=1.5)
                 time.sleep(2.0)
                 reset(2.0)
 
             elif emotion_name == "no":
                 # Shake head (Yaw)
-                mag = 10.0 # degrees
+                mag = 20.0 # degrees
                 speed = 0.4
                 self.set_pose(head_yaw=mag, duration=speed)
                 time.sleep(speed)
@@ -769,11 +849,11 @@ class RobotController:
 
             elif emotion_name == "yes":
                 # Nod head (Pitch)
-                mag = 7.5 # degrees
+                mag = 15.0 # degrees
                 speed = 0.4
                 self.set_pose(head_pitch=mag, duration=speed)
                 time.sleep(speed)
-                self.set_pose(head_pitch=-2.5, duration=speed)
+                self.set_pose(head_pitch=-5.0, duration=speed)
                 time.sleep(speed)
                 self.set_pose(head_pitch=mag, duration=speed)
                 time.sleep(speed)
@@ -781,7 +861,8 @@ class RobotController:
 
             elif emotion_name == "confused":
                 # Head tilt + one antenna up
-                self.set_pose(head_roll=0.4, head_pitch=-0.1, antenna_left=40.0, antenna_right=-10.0, duration=1.0)
+                # 40 -> 200
+                self.set_pose(head_roll=20, head_pitch=-5, antenna_left=200.0, antenna_right=-50.0, duration=1.0)
                 time.sleep(2.0)
                 reset(1.0)
 

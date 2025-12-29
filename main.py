@@ -46,8 +46,8 @@ detector = DetectionEngine() # Now uses YOLOv8 (Output is list of dicts)
 current_status = "System Initializing..."
 SERVER_STATE = {
     "paused": True, 
-    "wiggle_enabled": True
-} # Default Paused, Wiggle ON
+    "wiggle_enabled": False
+} # Default Paused, Wiggle OFF
 LATEST_CANDIDATES = []
 current_target_id = None
 trackable_objects = {}
@@ -158,6 +158,9 @@ def video_stream_loop():
     has_greeted_session = False
     last_detection_time = 0.0
     last_command_time = 0.0
+    last_detection_time = 0.0
+    last_command_time = 0.0
+    last_state_update = 0.0
     last_seen_time = 0.0
     
     
@@ -169,6 +172,13 @@ def video_stream_loop():
       try:
         loop_start = time.perf_counter()
         current_time = time.time()
+        
+        # Force State Update (5Hz) to keep UI fresh even when Paused
+        if current_time - last_state_update > 0.2:
+             try:
+                 robot.update_head_pose()
+                 last_state_update = current_time
+             except: pass
         
         # 1. Get Frame
         frame = robot.get_latest_frame()
