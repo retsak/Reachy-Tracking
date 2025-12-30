@@ -62,7 +62,14 @@ An autonomous tracking and control system for the Reachy robot with integrated v
 - **Reachy Robot Daemon**: A running Reachy robot (real or simulated) with the SDK server accessible on `localhost:8000` (default) or configured host.
 - **Camera**: USB camera (index 0 or 1) for video capture. DirectShow (Windows) or AVFoundation (macOS) backends supported.
 - **AI Models**: YOLOv8, Whisper, LLM, and Piper (download via `setup_model_assistant.py`).
+- **Piper TTS**: Required for voice synthesis. Install from https://github.com/rhasspy/piper
 - **Note for macOS Users**: System audio (CoreAudio) is used for playback; ensure audio device permissions are granted.
+
+## Documentation
+
+- **[API Documentation](API.md)** - Complete REST API reference
+- **[Configuration Guide](CONFIGURATION.md)** - Detailed configuration options
+- **[Troubleshooting Guide](TROUBLESHOOTING.md)** - Common issues and solutions
 
 ## Quick Start
 
@@ -203,6 +210,55 @@ If the robot daemon is on a different machine or port, update the `host` paramet
     [http://localhost:8082](http://localhost:8082)
     
     The dashboard opens automatically on startup.
+
+## Dashboard Features
+
+### Emotion System
+
+Trigger 25 pre-programmed emotions with one click:
+
+**Basic Emotions**:
+- Happy, Sad, Surprised, Angry, Confused, Scared, Excited, Bored, Shy
+
+**Social Gestures**:
+- Greeting, Waving, Nodding, Shaking Head, Shrugging
+
+**Playful Actions**:
+- Silly, Curious, Thinking, Dancing, Wiggle
+
+**Advanced Expressions**:
+- Love, Sleepy, Proud, Disappointed, Mischievous, Focused, Yawn
+
+Each emotion includes choreographed head and antenna movements for natural expression.
+
+**Usage**:
+1. Click emotion button in the dashboard
+2. Robot performs the animation
+3. Returns to tracking when done
+
+**API**:
+```bash
+curl -X POST http://localhost:8082/api/emote \
+  -H "Content-Type: application/json" \
+  -d '{"emotion": "happy"}'
+```
+
+### Visual Themes
+
+Choose from 18 beautiful themes:
+
+- **Dark/Light**: Classic modes
+- **Nature**: Ocean, Forest, Sunset, Cherry Blossom
+- **Tech**: Hacker, Cyberpunk, Synthwave
+- **Seasonal**: Halloween, Christmas, New Year
+- **Vibrant**: Midnight, Lavender, Arctic, Volcano, Coffee
+- **Fun**: Retro, Unicorn (rainbow gradient), Nyan Cat (animated!)
+
+**Special Themes**:
+- **Nyan Cat**: Features animated flying cat with rainbow trail
+- **Unicorn**: Beautiful rainbow gradient effects
+
+Theme selection persists between sessions.
 
 ## Models Directory
 
