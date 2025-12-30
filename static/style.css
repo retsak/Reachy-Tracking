@@ -1,6 +1,10 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
+/* ══════════════════════════════════════
+   THEME VARIABLES
+   ══════════════════════════════════════ */
 :root {
+    /* Dark theme (default) */
     --bg: #0d1117;
     --surface: #161b22;
     --surface-alt: #21262d;
@@ -12,6 +16,45 @@
     --danger: #f85149;
     --radius: 12px;
     --shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="light"] {
+    --bg: #ffffff;
+    --surface: #f6f8fa;
+    --surface-alt: #eaeef2;
+    --border: #d0d7de;
+    --text: #24292f;
+    --text-muted: #656d76;
+    --accent: #0969da;
+    --success: #1a7f37;
+    --danger: #cf222e;
+    --shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="ocean"] {
+    --bg: #0a1628;
+    --surface: #0d1b2a;
+    --surface-alt: #1c2d42;
+    --border: #3d444d;
+    --text: #caeef7;
+    --text-muted: #8dd6fa;
+    --accent: #79c0ff;
+    --success: #40c463;
+    --danger: #ff7b72;
+    --shadow: 0 2px 8px rgba(0, 68, 124, 0.3);
+}
+
+[data-theme="forest"] {
+    --bg: #0d1b0d;
+    --surface: #132213;
+    --surface-alt: #1c3a1c;
+    --border: #2d5a2d;
+    --text: #d4f1d4;
+    --text-muted: #7cbe7c;
+    --accent: #58d158;
+    --success: #3fb950;
+    --danger: #f08080;
+    --shadow: 0 2px 8px rgba(0, 80, 0, 0.3);
 }
 
 * {
@@ -56,6 +99,47 @@ body {
     display: flex;
     align-items: center;
     gap: 10px;
+}
+
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+/* Theme Selector */
+.theme-selector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.theme-selector label {
+    font-size: 16px;
+    cursor: default;
+}
+
+.theme-selector select {
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.theme-selector select:hover {
+    border-color: var(--accent);
+    background: var(--surface-alt);
+}
+
+.theme-selector select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
 }
 
 .header-status {

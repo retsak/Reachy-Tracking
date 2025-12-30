@@ -18,9 +18,20 @@
          ══════════════════════════════════════ -->
         <header class="header">
             <h1>🤖 Reachy Control</h1>
-            <div class="header-status">
-                <span><span class="status-dot"></span><span id="status-text">Ready</span></span>
-                <span>🔌 Connected</span>
+            <div class="header-controls">
+                <div class="theme-selector">
+                    <label for="theme-select">🎨</label>
+                    <select id="theme-select">
+                        <option value="dark">Dark</option>
+                        <option value="light">Light</option>
+                        <option value="ocean">Ocean</option>
+                        <option value="forest">Forest</option>
+                    </select>
+                </div>
+                <div class="header-status">
+                    <span><span class="status-dot"></span><span id="status-text">Ready</span></span>
+                    <span>🔌 Connected</span>
+                </div>
             </div>
         </header>
 
@@ -335,6 +346,23 @@
                 body: JSON.stringify({ volume: +e.target.value })
             });
         };
+
+        // ══════════════════════════════════════
+        // THEME SELECTION
+        // ══════════════════════════════════════
+        function initTheme() {
+            const saved = localStorage.getItem('theme') || 'dark';
+            document.documentElement.setAttribute('data-theme', saved);
+            $('theme-select').value = saved;
+        }
+        
+        $('theme-select').onchange = e => {
+            const theme = e.target.value;
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('theme', theme);
+        };
+        
+        initTheme();
 
         // ══════════════════════════════════════
         // POLLING
