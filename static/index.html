@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/static/style.css?v=2">
     <link rel="icon"
         href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🤖</text></svg>">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 
 <body>
@@ -40,6 +41,8 @@
                         <option value="synthwave">Synthwave</option>
                         <option value="coffee">Coffee</option>
                         <option value="cherry">Cherry</option>
+                        <option value="unicorn">🦄 Unicorn Barf</option>
+                        <option value="nyan">🐱 Nyan Cat</option>
                     </select>
                 </div>
                 <button class="header-btn" id="settings-btn" title="Settings">⚙️</button>
@@ -1053,6 +1056,151 @@
         
         // Load tuning on page load
         loadTuningSettings();
+
+        // ══════════════════════════════════════
+        // NYAN CAT WITH CANVAS ANIMATION
+        // ══════════════════════════════════════
+        let nyanCanvas = null;
+        let nyanCtx = null;
+        let nyanAnimationId = null;
+        
+        function initNyanCat() {
+            const theme = document.documentElement.getAttribute('data-theme');
+            if (theme !== 'nyan') {
+                cleanupNyanCat();
+                return;
+            }
+            
+            // Create canvas
+            if (!nyanCanvas) {
+                nyanCanvas = document.createElement('canvas');
+                nyanCanvas.id = 'nyan-canvas';
+                nyanCanvas.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    pointer-events: none;
+                    z-index: 9997;
+                `;
+                document.body.appendChild(nyanCanvas);
+                nyanCtx = nyanCanvas.getContext('2d');
+                
+                // Set canvas size
+                function resizeCanvas() {
+                    nyanCanvas.width = window.innerWidth;
+                    nyanCanvas.height = window.innerHeight;
+                }
+                resizeCanvas();
+                window.addEventListener('resize', resizeCanvas);
+            }
+            
+            const colors = ['#ff0000', '#ff7f00', '#ffff00', '#00ff00', '#0000ff', '#8b00ff'];
+            const trail = [];
+            let time = 0;
+            
+            function drawNyanCat() {
+                const theme = document.documentElement.getAttribute('data-theme');
+                if (theme !== 'nyan') {
+                    cleanupNyanCat();
+                    return;
+                }
+                
+                // Clear canvas
+                nyanCtx.clearRect(0, 0, nyanCanvas.width, nyanCanvas.height);
+                
+                time += 16;
+                const duration = 8000;
+                const progress = (time % duration) / duration;
+                
+                // Cat position
+                const catX = -50 + (nyanCanvas.width + 100) * progress;
+                let yPercent;
+                if (progress < 0.25) {
+                    yPercent = 0.20 + (0.30 - 0.20) * (progress / 0.25);
+                } else if (progress < 0.5) {
+                    yPercent = 0.30 + (0.25 - 0.30) * ((progress - 0.25) / 0.25);
+                } else if (progress < 0.75) {
+                    yPercent = 0.25 + (0.35 - 0.25) * ((progress - 0.5) / 0.25);
+                } else {
+                    yPercent = 0.35 + (0.20 - 0.35) * ((progress - 0.75) / 0.25);
+                }
+                const catY = nyanCanvas.height * yPercent;
+                
+                // Add trail point
+                trail.push({ x: catX, y: catY, time: Date.now() });
+                
+                // Remove old trail points
+                const now = Date.now();
+                while (trail.length > 0 && now - trail[0].time > 2000) {
+                    trail.shift();
+                }
+                
+                // Draw rainbow trail
+                const stripeHeight = 8;
+                const totalHeight = colors.length * stripeHeight;
+                
+                for (let i = 0; i < trail.length - 1; i++) {
+                    const p1 = trail[i];
+                    const p2 = trail[i + 1];
+                    const age = (now - p1.time) / 2000;
+                    const opacity = 1 - age;
+                    
+                    if (opacity > 0) {
+                        colors.forEach((color, colorIdx) => {
+                            nyanCtx.strokeStyle = color;
+                            nyanCtx.lineWidth = stripeHeight;
+                            nyanCtx.globalAlpha = opacity * 0.9;
+                            nyanCtx.shadowBlur = 10;
+                            nyanCtx.shadowColor = color;
+                            
+                            nyanCtx.beginPath();
+                            nyanCtx.moveTo(p1.x, p1.y + colorIdx * stripeHeight - totalHeight/2);
+                            nyanCtx.lineTo(p2.x, p2.y + colorIdx * stripeHeight - totalHeight/2);
+                            nyanCtx.stroke();
+                        });
+                    }
+                }
+                
+                // Reset shadow
+                nyanCtx.shadowBlur = 0;
+                nyanCtx.globalAlpha = 1;
+                
+                // Draw cat emoji
+                nyanCtx.font = '48px Arial';
+                nyanCtx.filter = 'drop-shadow(0 0 10px rgba(255, 102, 204, 0.8))';
+                nyanCtx.fillText('🐱', catX, catY);
+                nyanCtx.filter = 'none';
+                
+                nyanAnimationId = requestAnimationFrame(drawNyanCat);
+            }
+            
+            drawNyanCat();
+        }
+        
+        function cleanupNyanCat() {
+            if (nyanAnimationId) {
+                cancelAnimationFrame(nyanAnimationId);
+                nyanAnimationId = null;
+            }
+            if (nyanCanvas && nyanCanvas.parentNode) {
+                nyanCanvas.parentNode.removeChild(nyanCanvas);
+                nyanCanvas = null;
+                nyanCtx = null;
+            }
+        }
+        
+        // Initialize on theme change
+        const themeSelect = document.getElementById('theme-select');
+        const originalThemeChange = themeSelect.onchange;
+        themeSelect.onchange = function(e) {
+            if (originalThemeChange) originalThemeChange.call(this, e);
+            setTimeout(initNyanCat, 100);
+        };
+        
+        // Initialize if already on nyan theme
+        initNyanCat();
 
         // ══════════════════════════════════════
         // POLLING
