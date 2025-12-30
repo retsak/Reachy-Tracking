@@ -4,6 +4,15 @@ Future enhancements and improvements for the Reachy Tracking & Control system.
 
 ## Planned Features
 
+### In Progress
+
+#### Wake Word Detection
+- **Status**: In Progress
+- **Description**: Integrate Porcupine/KWS for "Hey Reachy" wake word
+- **Impact**: More natural voice activation (no button press needed)
+- **Dependencies**: Porcupine SDK or similar KWS library
+- **Success Criteria**: <1% false accept rate, <5% false reject rate
+
 ### High Priority (Now - 0-2 days)
 
 #### GPU Acceleration
@@ -51,13 +60,6 @@ Future enhancements and improvements for the Reachy Tracking & Control system.
 - **Impact**: More engaging idle behavior
 - **Files**: `main.py`, tracking logic
 - **Behavior**: Smooth panning with configurable pattern
-
-#### Wake Word Detection
-- **Status**: Planned
-- **Description**: Integrate Porcupine/KWS for "Hey Reachy" wake word
-- **Impact**: More natural voice activation (no button press needed)
-- **Dependencies**: Porcupine SDK or similar KWS library
-- **Success Criteria**: <1% false accept rate, <5% false reject rate
 
 #### Conversation Memory Enhancement
 - **Status**: Planned
