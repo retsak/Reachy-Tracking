@@ -23,6 +23,10 @@ class RobotController:
         self.win_exposure_value = -4    # less negative -> brighter on many webcams
         self.win_gain = 12.0            # moderate gain boost for dim scenes
         
+        # SDK instance for audio playback
+        self.sdk_mini = None
+        self.sdk_lock = threading.Lock()
+        
         # Command Queue for serialized execution
         self.command_queue = queue.Queue()
         self._worker_thread = threading.Thread(target=self._command_worker, daemon=True)
@@ -183,6 +187,14 @@ class RobotController:
                 print("No working camera found.")
         
         self._is_connected_to_api = api_success
+        
+        # Initialize SDK for audio playback (lazy load)
+        self._initialize_sdk()
+
+    def _initialize_sdk(self):
+        """SDK initialization moved to on-demand in audio playback to avoid camera conflicts"""
+        # No longer needed - we'll use context manager pattern for audio
+        pass
 
     def _enforce_camera_config(self, cap):
         """Force MJPEG + 640x480 @15fps and enable auto exposure where supported."""
@@ -658,10 +670,18 @@ class RobotController:
 
     def play_sound_from_file(self, filepath: str):
         """Play audio from an absolute file path (used for TTS output)."""
-        threading.Thread(target=self._play_audio_file, args=(filepath,), daemon=True).start()
+        def safe_play():
+            try:
+                self._play_audio_file(filepath)
+            except Exception as e:
+                print(f"[AUDIO] Unhandled exception in playback thread: {type(e).__name__}: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        threading.Thread(target=safe_play, daemon=True).start()
 
     def _play_audio_file(self, filepath: str):
-        """Internal method to play audio from any file path."""
+        """Internal method to play audio using SDK in context manager (matches SDK example pattern)."""
         if not os.path.exists(filepath):
             print(f"[AUDIO] File not found: {filepath}")
             return
@@ -670,134 +690,146 @@ class RobotController:
         tempdir = os.path.abspath(tempfile.gettempdir())
         is_temp_file = os.path.abspath(filepath).startswith(tempdir)
         
-        # Mark camera for settings reapplication before and after audio
-        self._reapply_camera_settings = True
+        # Temporarily pause camera to avoid conflicts with SDK
+        self._pause_camera_reads = True
+        time.sleep(0.2)  # Give camera thread time to pause
+        
+        try:
+            # Start Speaking Motion in separate thread
+            self._is_speaking = True
+            self._speech_roll_offset = 0.0
+            self._speech_pitch_offset = 0.0
+            self._speech_antenna_left_offset = 0.0
+            self._speech_antenna_right_offset = 0.0
 
-        # Try multiple times with increasing timeouts
-        for attempt in range(3):
-            try:
-                timeout = 10 + (attempt * 5)  # 10s, 15s, 20s
-                print(f"[AUDIO] Attempt {attempt + 1}: connecting with {timeout}s timeout...")
-                
-                with SDKReachyMini(log_level="ERROR", media_backend="default", timeout=timeout) as mini:
-                    data, samplerate_in = sf.read(filepath, dtype="float32")
+            def motion_thread():
+                tilt_deg = 20.0
+                pitch_deg = -5.0
+                ant_up = 60.0
+                ant_down = -15.0
+                direction = 1
+                while self._is_speaking:
+                    roll_offset_rad = np.deg2rad(tilt_deg) * direction
+                    pitch_offset_rad = np.deg2rad(pitch_deg)
+                    
+                    self._speech_roll_offset = roll_offset_rad
+                    self._speech_pitch_offset = pitch_offset_rad
 
-                    output_rate = mini.media.get_output_audio_samplerate()
-                    if samplerate_in != output_rate:
-                        new_len = int(len(data) * (output_rate / samplerate_in))
-                        data = scipy.signal.resample(data, new_len)
-
-                    if data.ndim > 1:
-                        data = np.mean(data, axis=1)
-
-                    # Apply volume scaling
+                    if direction > 0:
+                        self._speech_antenna_left_offset = ant_up
+                        self._speech_antenna_right_offset = ant_down
+                    else:
+                        self._speech_antenna_left_offset = ant_down
+                        self._speech_antenna_right_offset = ant_up
+                    
                     try:
-                        data = (data * float(self.audio_volume)).astype('float32')
-                    except Exception:
+                        self.set_pose(duration=1.5)
+                    except: 
                         pass
-
-                    # Start Speaking Motion
-                    self._is_speaking = True
-                    self._speech_roll_offset = 0.0
-                    self._speech_pitch_offset = 0.0
-                    self._speech_antenna_left_offset = 0.0
-                    self._speech_antenna_right_offset = 0.0
-
-                    def motion_thread():
-                        # Confused-like head tilt, alternating left/right while speaking.
-                        # Antennas also animate, but with reduced amplitude.
-                        tilt_deg = 20.0
-                        pitch_deg = -5.0
-                        ant_up = 60.0
-                        ant_down = -15.0
-                        direction = 1
-                        while self._is_speaking:
-                            roll_offset_rad = np.deg2rad(tilt_deg) * direction
-                            pitch_offset_rad = np.deg2rad(pitch_deg)
-                            
-                            # Set offset (RADIANS)
-                            self._speech_roll_offset = roll_offset_rad
-                            self._speech_pitch_offset = pitch_offset_rad
-
-                            if direction > 0:
-                                self._speech_antenna_left_offset = ant_up
-                                self._speech_antenna_right_offset = ant_down
-                            else:
-                                self._speech_antenna_left_offset = ant_down
-                                self._speech_antenna_right_offset = ant_up
-                            
-                            # Push update with LONG duration for smoothness
-                            try:
-                                self.set_pose(duration=1.5)
-                            except: pass
-                            
-                            # Wait for motion
-                            for _ in range(15): # 1.5s
-                                if not self._is_speaking: break
-                                time.sleep(0.1)
-                            
-                            direction *= -1
-
-                        # Reset gently
-                        self._speech_roll_offset = 0.0
-                        self._speech_pitch_offset = 0.0
-                        self._speech_antenna_left_offset = 0.0
-                        self._speech_antenna_right_offset = 0.0
-                        # Explicitly return antennas to 0 at the end of speech.
-                        # (Head/body return to their base pose.)
-                        try:
-                            self.set_pose(antenna_left=0.0, antenna_right=0.0, duration=2.0)
-                        except: pass
-
-                    threading.Thread(target=motion_thread, daemon=True).start()
-
-                    mini.media.start_playing()
-                    print(f"[AUDIO] Playing {len(data)} samples...")
-                    # Push samples in chunks
-                    chunk_size = 1024
-                    for i in range(0, len(data), chunk_size):
-                        chunk = data[i : i + chunk_size]
-                        mini.media.push_audio_sample(chunk)
-
-                    # Wait for playback to complete
-                    time.sleep(len(data) / float(output_rate) + 0.5)
-                    self._is_speaking = False # Stop motion
-                    mini.media.stop_playing()
-                    print(f"[AUDIO] Finished: {filepath}")
                     
-                    # Trigger camera settings reapplication after audio
-                    self._reapply_camera_settings = True
+                    for _ in range(15):
+                        if not self._is_speaking: 
+                            break
+                        time.sleep(0.1)
                     
-                    # Delete temporary file if it was created by TTS
-                    if is_temp_file:
+                    direction *= -1
+
+                # Reset gently
+                self._speech_roll_offset = 0.0
+                self._speech_pitch_offset = 0.0
+                self._speech_antenna_left_offset = 0.0
+                self._speech_antenna_right_offset = 0.0
+                try:
+                    self.set_pose(antenna_left=0.0, antenna_right=0.0, duration=2.0)
+                except: 
+                    pass
+
+            threading.Thread(target=motion_thread, daemon=True).start()
+            
+            # Use SDK in context manager pattern with retry logic
+            print(f"[AUDIO] Initializing SDK for playback...")
+            max_retries = 2
+            
+            for attempt in range(max_retries):
+                try:
+                    print(f"[AUDIO] Connection attempt {attempt + 1}/{max_retries}...")
+                    with SDKReachyMini(log_level="ERROR", media_backend="default", timeout=15) as mini:
+                        # Read and prepare audio data
+                        data, samplerate_in = sf.read(filepath, dtype="float32")
+
+                        output_rate = mini.media.get_output_audio_samplerate()
+                        if samplerate_in != output_rate:
+                            new_len = int(len(data) * (output_rate / samplerate_in))
+                            data = scipy.signal.resample(data, new_len)
+
+                        if data.ndim > 1:  # Convert to mono
+                            data = np.mean(data, axis=1)
+
+                        # Apply volume scaling
                         try:
-                            os.remove(filepath)
-                            print(f"[AUDIO] Deleted temp file: {filepath}")
-                        except Exception as de:
-                            print(f"[AUDIO] Temp delete failed: {de}")
-                    return  # Success
-            except TimeoutError:
-                if attempt < 2:
-                    print(f"[AUDIO] Timeout, retrying with longer timeout...")
-                    time.sleep(1)
-                else:
-                    print(f"[AUDIO] Failed to connect after 3 attempts")
-                    # Cleanup on failure for temp files
-                    if is_temp_file:
-                        try:
-                            os.remove(filepath)
-                            print(f"[AUDIO] Deleted temp file after failure: {filepath}")
-                        except Exception as de:
-                            print(f"[AUDIO] Temp delete failed: {de}")
-            except Exception as e:
-                print(f"[AUDIO] Error playing file: {e}")
-                # Cleanup on error for temp files
-                if is_temp_file:
-                    try:
-                        os.remove(filepath)
-                        print(f"[AUDIO] Deleted temp file after error: {filepath}")
-                    except Exception as de:
-                        print(f"[AUDIO] Temp delete failed: {de}")
+                            data = (data * float(self.audio_volume)).astype('float32')
+                        except Exception:
+                            pass
+
+                        # Play audio
+                        mini.media.start_playing()
+                        print(f"[AUDIO] Playing {len(data)} samples at {output_rate} Hz...")
+                        
+                        # Push samples in chunks
+                        chunk_size = 1024
+                        start_push_time = time.time()
+                        for i in range(0, len(data), chunk_size):
+                            chunk = data[i : i + chunk_size]
+                            mini.media.push_audio_sample(chunk)
+                        push_duration = time.time() - start_push_time
+                        print(f"[AUDIO] Pushed all samples in {push_duration:.2f}s")
+
+                        # Wait for playback to complete
+                        # Calculate total duration and subtract time already spent pushing
+                        playback_duration = len(data) / float(output_rate)
+                        remaining_duration = max(0, playback_duration - push_duration)
+                        print(f"[AUDIO] Total duration: {playback_duration:.2f}s, waiting {remaining_duration + 1.0:.2f}s more...")
+                        time.sleep(remaining_duration + 1.0)  # Extra second for buffer
+                        
+                        mini.media.stop_playing()
+                        print(f"[AUDIO] Playback complete: {filepath}")
+                        
+                        # Success - break retry loop
+                        break
+                        
+                except (TimeoutError, ConnectionError) as conn_err:
+                    print(f"[AUDIO] Connection failed (attempt {attempt + 1}/{max_retries}): {conn_err}")
+                    if attempt < max_retries - 1:
+                        print(f"[AUDIO] Retrying in 2 seconds...")
+                        time.sleep(2)
+                    else:
+                        raise  # Re-raise on final attempt
+            
+            self._is_speaking = False
+            
+            # Delete temporary file
+            if is_temp_file:
+                try:
+                    os.remove(filepath)
+                    print(f"[AUDIO] Deleted temp file: {filepath}")
+                except Exception as de:
+                    print(f"[AUDIO] Temp delete failed: {de}")
+                    
+        except Exception as e:
+            print(f"[AUDIO] Error playing file: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            self._is_speaking = False
+            if is_temp_file:
+                try:
+                    os.remove(filepath)
+                    print(f"[AUDIO] Deleted temp file after error: {filepath}")
+                except Exception as de:
+                    print(f"[AUDIO] Temp delete failed: {de}")
+        finally:
+            # Resume camera reads and mark for settings reapplication
+            self._pause_camera_reads = False
+            self._reapply_camera_settings = True
 
     # --- EMOTIVE MOTIONS ---
     def trigger_emotion(self, emotion_name: str):

@@ -28,6 +28,7 @@
                         <option value="forest">Forest</option>
                     </select>
                 </div>
+                <button class="header-btn" id="settings-btn" title="Settings">⚙️</button>
                 <div class="header-status">
                     <span><span class="status-dot"></span><span id="status-text">Ready</span></span>
                     <span>🔌 Connected</span>
@@ -205,9 +206,208 @@
         </div>
     </div>
 
+    <!-- ══════════════════════════════════════
+     SETTINGS MODAL
+     ══════════════════════════════════════ -->
+    <div id="settings-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>⚙️ Settings</h2>
+                <button class="modal-close" id="modal-close">✕</button>
+            </div>
+            <div class="modal-tabs">
+                <button class="tab-btn active" data-tab="llm-tab">LLM Models</button>
+                <button class="tab-btn" data-tab="voice-tab">Voice Settings</button>
+                <button class="tab-btn" data-tab="tuning-tab">Tuning</button>
+                <button class="tab-btn" data-tab="system-tab">System</button>
+            </div>
+            
+            <!-- LLM Settings Tab -->
+            <div id="llm-tab" class="tab-content active">
+                <div class="settings-group">
+                    <h3>Language Model Provider</h3>
+                    <div class="provider-selector">
+                        <button class="provider-btn active" data-provider="local">📦 Local</button>
+                        <button class="provider-btn" data-provider="ollama">🦙 OLLAMA</button>
+                        <button class="provider-btn" data-provider="openai">🚀 OpenAI</button>
+                    </div>
+                </div>
+
+                <!-- Local Models -->
+                <div id="local-config" class="provider-config active">
+                    <h4>Local Model Selection</h4>
+                    <div class="settings-row">
+                        <label>Current Model:</label>
+                        <select id="local-model-select">
+                            <option>Loading...</option>
+                        </select>
+                    </div>
+                    <p class="info-text">📌 Local models run on your device without internet.</p>
+                </div>
+
+                <!-- OLLAMA Config -->
+                <div id="ollama-config" class="provider-config">
+                    <h4>OLLAMA Configuration</h4>
+                    <div class="settings-row">
+                        <label>OLLAMA Endpoint:</label>
+                        <input type="text" id="ollama-endpoint" placeholder="http://localhost:11434" value="http://localhost:11434">
+                    </div>
+                    <div class="settings-row">
+                        <label>Model:</label>
+                        <select id="ollama-model-select">
+                            <option>Not Connected</option>
+                        </select>
+                    </div>
+                    <button id="ollama-test-btn" class="action-btn">Test Connection</button>
+                    <p class="info-text">📌 OLLAMA allows you to run models locally with a server. <a href="https://ollama.ai" target="_blank">Get OLLAMA</a></p>
+                </div>
+
+                <!-- OpenAI Config -->
+                <div id="openai-config" class="provider-config">
+                    <h4>OpenAI API Configuration</h4>
+                    <div class="settings-row">
+                        <label>API Key:</label>
+                        <input type="password" id="openai-key" placeholder="sk-...">
+                    </div>
+                    <div class="settings-row">
+                        <label>Model:</label>
+                        <select id="openai-model-select">
+                            <option>Loading models...</option>
+                        </select>
+                    </div>
+                    <button id="openai-test-btn" class="action-btn">Verify Key</button>
+                    <p class="info-text">
+                        📌 Get your API key at <a href="https://platform.openai.com/api-keys" target="_blank">OpenAI API Keys</a>
+                        <br>💰 View pricing at <a href="https://platform.openai.com/pricing" target="_blank">OpenAI Pricing</a>
+                    </p>
+                    
+                    <!-- Pricing Table -->
+                    <div id="pricing-container" style="display:none;">
+                        <h5>Model Pricing (per 1M tokens)</h5>
+                        <table class="pricing-table">
+                            <thead>
+                                <tr>
+                                    <th>Model</th>
+                                    <th>Category</th>
+                                    <th>Input</th>
+                                    <th>Output</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pricing-body">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="settings-row" style="margin-top:20px;">
+                    <button id="save-llm-btn" class="action-btn" style="background:var(--success); color:#000;">💾 Save Settings</button>
+                </div>
+            </div>
+
+            <!-- Voice Settings Tab -->
+            <div id="voice-tab" class="tab-content">
+                <div class="settings-group">
+                    <h3>Text-to-Speech Settings</h3>
+                    <div class="settings-row">
+                        <label>Default Volume:</label>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <input type="range" id="default-volume" min="0" max="100" value="50" style="flex:1;">
+                            <span id="volume-display">50%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tuning Settings Tab -->
+            <div id="tuning-tab" class="tab-content">
+                <div class="settings-group">
+                    <h3>Detection & Tracking Tuning</h3>
+                    <p class="info-text">⚙️ Fine-tune robot behavior and tracking performance.</p>
+                    
+                    <div class="settings-row">
+                        <label>Detection Interval (seconds):</label>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <input type="range" id="tune-detection-interval" min="0.01" max="1.0" step="0.01" value="0.20" style="flex:1;">
+                            <span id="tune-detection-interval-val" style="min-width:60px;">0.20s</span>
+                        </div>
+                        <p class="info-text" style="font-size:11px; margin-top:4px;">How often to run object detection (0.01-1.0s). Lower = faster detection, higher CPU.</p>
+                    </div>
+                    
+                    <div class="settings-row">
+                        <label>Command Interval (seconds):</label>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <input type="range" id="tune-command-interval" min="0.1" max="5.0" step="0.1" value="1.2" style="flex:1;">
+                            <span id="tune-command-interval-val" style="min-width:60px;">1.2s</span>
+                        </div>
+                        <p class="info-text" style="font-size:11px; margin-top:4px;">How often to send movement commands (0.1-5.0s). Lower = smoother tracking, more movement.</p>
+                    </div>
+                    
+                    <div class="settings-row">
+                        <label>Stream FPS Cap:</label>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <input type="range" id="tune-stream-fps-cap" min="1" max="60" step="1" value="60" style="flex:1;">
+                            <span id="tune-stream-fps-cap-val" style="min-width:60px;">60 FPS</span>
+                        </div>
+                        <p class="info-text" style="font-size:11px; margin-top:4px;">Maximum video stream frame rate (1-60 FPS). Lower = reduced bandwidth.</p>
+                    </div>
+                    
+                    <div class="settings-row">
+                        <label>Min Score Threshold:</label>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <input type="range" id="tune-min-score-threshold" min="0" max="500" step="10" value="250" style="flex:1;">
+                            <span id="tune-min-score-threshold-val" style="min-width:60px;">250</span>
+                        </div>
+                        <p class="info-text" style="font-size:11px; margin-top:4px;">Minimum score required to track a target (0-500). Higher = more selective.</p>
+                    </div>
+                    
+                    <div class="settings-row">
+                        <label>Recenter Timeout (seconds):</label>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <input type="range" id="tune-recenter-timeout" min="0.5" max="10.0" step="0.5" value="2.0" style="flex:1;">
+                            <span id="tune-recenter-timeout-val" style="min-width:60px;">2.0s</span>
+                        </div>
+                        <p class="info-text" style="font-size:11px; margin-top:4px;">Time before recentering after losing target (0.5-10.0s).</p>
+                    </div>
+                    
+                    <div class="settings-row" style="margin-top:20px;">
+                        <button id="save-tuning-btn" class="action-btn" style="background:var(--success); color:#000;">💾 Save Tuning</button>
+                        <button id="reset-tuning-btn" class="action-btn" style="background:var(--warning); color:#000; margin-left:10px;">🔄 Reset to Defaults</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Settings Tab -->
+            <div id="system-tab" class="tab-content">
+                <div class="settings-group">
+                    <h3>Debug & Logging</h3>
+                    <div class="settings-row">
+                        <label>
+                            <input type="checkbox" id="verbose-logging" style="margin-right:8px;">
+                            Enable Verbose Logging
+                        </label>
+                        <p class="info-text">📌 When enabled, all API requests (including polling) are logged to the console.</p>
+                    </div>
+                </div>
+                
+                <div class="settings-group">
+                    <h3>About</h3>
+                    <p>Reachy Control v1.0</p>
+                    <p id="backend-info" style="font-size:12px; color:var(--text-muted);">Backend: Initializing...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const $ = id => document.getElementById(id);
         let isPaused = false, voiceEnabled = false, wiggleEnabled = false;
+
+        // Simple console logger wrapper
+        const logger = {
+            info: (...args) => console.log('[INFO]', ...args),
+            warn: (...args) => console.warn('[WARN]', ...args),
+            error: (...args) => console.error('[ERROR]', ...args)
+        };
 
         // ══════════════════════════════════════
         // CHAT
@@ -337,9 +537,24 @@
             });
         }
 
-        // Volume
+        // Volume (Main screen)
         $('volume-slider').oninput = e => $('volume-val').textContent = e.target.value + '%';
         $('volume-slider').onchange = e => {
+            fetch('/api/voice/volume', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ volume: +e.target.value })
+            });
+        };
+
+        // Volume (Settings menu)
+        $('default-volume').oninput = e => {
+            $('volume-display').textContent = e.target.value + '%';
+            // Sync with main volume slider
+            $('volume-slider').value = e.target.value;
+            $('volume-val').textContent = e.target.value + '%';
+        };
+        $('default-volume').onchange = e => {
             fetch('/api/voice/volume', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -363,6 +578,467 @@
         };
         
         initTheme();
+
+        // ══════════════════════════════════════
+        // SETTINGS MODAL
+        // ══════════════════════════════════════
+        $('settings-btn').onclick = () => $('settings-modal').classList.add('active');
+        $('modal-close').onclick = () => $('settings-modal').classList.remove('active');
+        
+        // Tab switching
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.onclick = () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+                btn.classList.add('active');
+                $(btn.dataset.tab).classList.add('active');
+            };
+        });
+        
+        // Provider switching
+        document.querySelectorAll('.provider-btn').forEach(btn => {
+            btn.onclick = async () => {
+                document.querySelectorAll('.provider-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.provider-config').forEach(c => c.classList.remove('active'));
+                btn.classList.add('active');
+                const provider = btn.dataset.provider;
+                $(provider + '-config').classList.add('active');
+                
+                // Load provider-specific data
+                if (provider === 'openai') {
+                    // Check if OpenAI config is already saved
+                    try {
+                        const res = await fetch('/api/llm/status');
+                        const data = await res.json();
+                        
+                        if (data.provider === 'openai' && data.config.has_api_key) {
+                            // Key is saved - show placeholder and load models with stored key
+                            $('openai-key').placeholder = '••••••••••••••••••••••••••••••••••';
+                            $('openai-key').value = '';
+                            $('openai-key').style.opacity = '0.6';
+                            
+                            await loadOpenAIModels(true);
+                            
+                            // Pre-select the saved model
+                            if (data.config.model) {
+                                $('openai-model-select').value = data.config.model;
+                            }
+                        } else {
+                            // No saved key - reset form
+                            $('openai-key').placeholder = 'sk-...';
+                            $('openai-key').value = '';
+                            $('openai-key').style.opacity = '1';
+                            loadOpenAIModels();
+                        }
+                    } catch (e) {
+                        console.error('Error loading OpenAI config:', e);
+                        loadOpenAIModels();
+                    }
+                } else if (provider === 'ollama') {
+                    loadOLLAMAModels();
+                } else if (provider === 'local') {
+                    loadLocalModels();
+                }
+            };
+        });
+        
+        // Load local models
+        async function loadLocalModels() {
+            try {
+                const res = await fetch('/api/llm/models/local');
+                const data = await res.json();
+                const select = $('local-model-select');
+                select.innerHTML = '';
+                (data.models || []).forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.id;
+                    opt.textContent = m.name;
+                    if (m.current) opt.selected = true;
+                    select.appendChild(opt);
+                });
+            } catch (e) {
+                console.error('Error loading local models:', e);
+            }
+        }
+        
+        // Load OLLAMA models
+        async function loadOLLAMAModels() {
+            try {
+                const endpoint = $('ollama-endpoint').value;
+                const res = await fetch('/api/llm/models/ollama?endpoint=' + encodeURIComponent(endpoint));
+                const data = await res.json();
+                const select = $('ollama-model-select');
+                select.innerHTML = '';
+                if (data.models && data.models.length > 0) {
+                    data.models.forEach(m => {
+                        const opt = document.createElement('option');
+                        opt.value = m;
+                        opt.textContent = m;
+                        select.appendChild(opt);
+                    });
+                } else {
+                    select.innerHTML = '<option>Not Connected</option>';
+                }
+            } catch (e) {
+                console.error('Error loading OLLAMA models:', e);
+                $('ollama-model-select').innerHTML = '<option>Connection Failed</option>';
+            }
+        }
+        
+        // Load OpenAI models
+        async function loadOpenAIModels(useStoredKey = false) {
+            try {
+                let apiKey = $('openai-key').value;
+                
+                // If no key entered but one is stored, load models using backend's stored key
+                if (!apiKey && useStoredKey) {
+                    // Fetch models using the backend's stored key
+                    const res = await fetch('/api/llm/models/openai', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ api_key: null })  // null tells backend to use stored key
+                    });
+                    const data = await res.json();
+                    const select = $('openai-model-select');
+                    select.innerHTML = '';
+                    if (data.models && data.models.length > 0) {
+                        data.models.forEach(m => {
+                            const opt = document.createElement('option');
+                            opt.value = m.id;
+                            opt.textContent = m.name;
+                            select.appendChild(opt);
+                        });
+                        
+                        // Show pricing
+                        if (data.pricing && data.pricing.length > 0) {
+                            const tbody = $('pricing-body');
+                            tbody.innerHTML = '';
+                            data.pricing.forEach(p => {
+                                const tr = document.createElement('tr');
+                                tr.innerHTML = `<td><strong>${p.model}</strong></td><td style="font-size:11px;color:var(--accent);">${p.category}</td><td>${p.input_price}</td><td>${p.output_price}</td>`;
+                                tbody.appendChild(tr);
+                            });
+                            $('pricing-container').style.display = 'block';
+                        }
+                    }
+                    return;
+                }
+                
+                if (!apiKey) {
+                    $('openai-model-select').innerHTML = '<option>Enter API key first</option>';
+                    return;
+                }
+                const res = await fetch('/api/llm/models/openai', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey })
+                });
+                const data = await res.json();
+                const select = $('openai-model-select');
+                select.innerHTML = '';
+                if (data.models && data.models.length > 0) {
+                    data.models.forEach(m => {
+                        const opt = document.createElement('option');
+                        opt.value = m.id;
+                        opt.textContent = m.name;
+                        select.appendChild(opt);
+                    });
+                    
+                    // Show pricing
+                    if (data.pricing && data.pricing.length > 0) {
+                        const tbody = $('pricing-body');
+                        tbody.innerHTML = '';
+                        data.pricing.forEach(p => {
+                            const tr = document.createElement('tr');
+                            tr.innerHTML = `<td><strong>${p.model}</strong></td><td style="font-size:11px;color:var(--accent);">${p.category}</td><td>${p.input_price}</td><td>${p.output_price}</td>`;
+                            tbody.appendChild(tr);
+                        });
+                        $('pricing-container').style.display = 'block';
+                    }
+                } else {
+                    select.innerHTML = '<option>Error: Invalid API key</option>';
+                }
+            } catch (e) {
+                console.error('Error loading OpenAI models:', e);
+                $('openai-model-select').innerHTML = '<option>Error loading models</option>';
+            }
+        }
+        
+        // Test buttons
+        $('ollama-test-btn').onclick = () => {
+            loadOLLAMAModels();
+        };
+        
+        $('openai-test-btn').onclick = async () => {
+            const apiKey = $('openai-key').value;
+            if (!apiKey) {
+                alert('Please enter your API key');
+                return;
+            }
+            try {
+                const res = await fetch('/api/llm/validate-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey, provider: 'openai' })
+                });
+                const data = await res.json();
+                if (data.valid) {
+                    alert('✅ API key is valid!');
+                    loadOpenAIModels();
+                } else {
+                    alert('❌ API key is invalid: ' + (data.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error verifying key: ' + e.message);
+            }
+        };
+        
+        // Save settings
+        $('save-llm-btn').onclick = async () => {
+            const provider = document.querySelector('.provider-btn.active').dataset.provider;
+            const config = {};
+            
+            if (provider === 'local') {
+                config.model_id = $('local-model-select').value;
+            } else if (provider === 'ollama') {
+                config.endpoint = $('ollama-endpoint').value;
+                config.model = $('ollama-model-select').value;
+            } else if (provider === 'openai') {
+                config.api_key = $('openai-key').value;
+                config.model = $('openai-model-select').value;
+            }
+            
+            try {
+                const res = await fetch('/api/llm/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider, config })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    alert('✅ Settings saved successfully!');
+                    $('settings-modal').classList.remove('active');
+                } else {
+                    alert('❌ Error saving settings: ' + (data.error || 'Unknown error'));
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            }
+        };
+        
+        // Load initial data
+        loadLocalModels();
+        
+        // Load saved LLM configuration on page load
+        async function loadSavedLLMConfig() {
+            try {
+                const res = await fetch('/api/llm/status');
+                const data = await res.json();
+                
+                if (data.provider) {
+                    // Set the active provider button
+                    document.querySelectorAll('.provider-btn').forEach(btn => {
+                        btn.classList.remove('active');
+                        if (btn.dataset.provider === data.provider) {
+                            btn.classList.add('active');
+                        }
+                    });
+                    
+                    // Show the correct provider config
+                    document.querySelectorAll('.provider-config').forEach(cfg => cfg.classList.remove('active'));
+                    $(data.provider + '-config').classList.add('active');
+                    
+                    // Populate saved settings
+                    if (data.provider === 'local' && data.config.model_id) {
+                        $('local-model-select').value = data.config.model_id;
+                    } else if (data.provider === 'ollama') {
+                        if (data.config.endpoint) $('ollama-endpoint').value = data.config.endpoint;
+                        if (data.config.model) $('ollama-model-select').value = data.config.model;
+                    } else if (data.provider === 'openai') {
+                        // Show placeholder if API key is already saved
+                        if (data.config.has_api_key) {
+                            $('openai-key').placeholder = '••••••••••••••••••••••••••••••••••';
+                            $('openai-key').value = '';
+                            $('openai-key').style.opacity = '0.6';
+                            
+                            // Load OpenAI models using stored key
+                            await loadOpenAIModels(true);
+                            
+                            // Set the selected model
+                            if (data.config.model) {
+                                $('openai-model-select').value = data.config.model;
+                            }
+                        }
+                    }
+                    
+                    logger.info(`Loaded LLM config: provider=${data.provider}`);
+                }
+            } catch (e) {
+                console.error('Error loading LLM config:', e);
+            }
+        }
+        
+        loadSavedLLMConfig();
+        
+        // Verbose logging toggle
+        function initVerboseLogging() {
+            const saved = localStorage.getItem('verbose-logging') === 'true';
+            $('verbose-logging').checked = saved;
+            sendVerboseSetting(saved);
+        }
+        
+        $('verbose-logging').onchange = e => {
+            const enabled = e.target.checked;
+            localStorage.setItem('verbose-logging', enabled);
+            sendVerboseSetting(enabled);
+        };
+        
+        async function sendVerboseSetting(enabled) {
+            try {
+                await fetch('/api/settings/verbose', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ verbose: enabled })
+                });
+            } catch (e) {
+                console.error('Error setting verbose logging:', e);
+            }
+        }
+        
+        initVerboseLogging();
+
+        // ══════════════════════════════════════
+        // TUNING SETTINGS
+        // ══════════════════════════════════════
+        const tuningParams = [
+            { id: 'detection-interval', key: 'detection_interval', suffix: 's', decimals: 2 },
+            { id: 'command-interval', key: 'command_interval', suffix: 's', decimals: 1 },
+            { id: 'stream-fps-cap', key: 'stream_fps_cap', suffix: ' FPS', decimals: 0 },
+            { id: 'min-score-threshold', key: 'min_score_threshold', suffix: '', decimals: 0 },
+            { id: 'recenter-timeout', key: 'recenter_timeout', suffix: 's', decimals: 1 }
+        ];
+        
+        // Initialize tuning controls
+        tuningParams.forEach(param => {
+            const slider = $('tune-' + param.id);
+            const display = $('tune-' + param.id + '-val');
+            
+            slider.oninput = () => {
+                const val = parseFloat(slider.value);
+                display.textContent = val.toFixed(param.decimals) + param.suffix;
+            };
+        });
+        
+        // Load current tuning values
+        async function loadTuningSettings() {
+            try {
+                // Try to load from localStorage first (for persistence across page reloads)
+                const savedTuning = localStorage.getItem('tuning-settings');
+                let data = null;
+                
+                if (savedTuning) {
+                    try {
+                        data = JSON.parse(savedTuning);
+                        logger.info('Loaded tuning from localStorage');
+                    } catch (e) {
+                        logger.warn('Invalid localStorage tuning data, fetching from server');
+                    }
+                }
+                
+                // Fetch from server (authoritative source)
+                const res = await fetch('/api/tuning');
+                if (res.ok) {
+                    data = await res.json();
+                    // Update localStorage with server values
+                    localStorage.setItem('tuning-settings', JSON.stringify(data));
+                }
+                
+                if (data) {
+                    tuningParams.forEach(param => {
+                        const slider = $('tune-' + param.id);
+                        const display = $('tune-' + param.id + '-val');
+                        const value = data[param.key];
+                        
+                        if (value !== undefined) {
+                            slider.value = value;
+                            display.textContent = parseFloat(value).toFixed(param.decimals) + param.suffix;
+                        }
+                    });
+                    
+                    logger.info('Loaded tuning settings');
+                }
+            } catch (e) {
+                console.error('Error loading tuning settings:', e);
+            }
+        }
+        
+        // Save tuning settings
+        $('save-tuning-btn').onclick = async () => {
+            const tuning = {};
+            tuningParams.forEach(param => {
+                const slider = $('tune-' + param.id);
+                tuning[param.key] = parseFloat(slider.value);
+            });
+            
+            try {
+                const res = await fetch('/api/tuning', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(tuning)
+                });
+                
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                }
+                
+                const data = await res.json();
+                
+                // Save to localStorage for persistence
+                localStorage.setItem('tuning-settings', JSON.stringify(tuning));
+                
+                if (data.warnings && data.warnings.length > 0) {
+                    alert('⚠️ Tuning saved with warnings:\n' + data.warnings.join('\n'));
+                } else {
+                    alert('✅ Tuning settings saved successfully!');
+                }
+                
+                logger.info('Saved tuning settings:', tuning);
+            } catch (e) {
+                console.error('Error saving tuning:', e);
+                alert('❌ Error saving tuning settings: ' + e.message);
+            }
+        };
+        
+        // Reset to defaults
+        $('reset-tuning-btn').onclick = async () => {
+            if (!confirm('Reset all tuning parameters to defaults?')) return;
+            
+            const defaults = {
+                detection_interval: 0.20,
+                command_interval: 1.2,
+                stream_fps_cap: 60.0,
+                min_score_threshold: 250.0,
+                recenter_timeout: 2.0
+            };
+            
+            try {
+                const res = await fetch('/api/tuning', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(defaults)
+                });
+                
+                await loadTuningSettings(); // Reload values
+                alert('✅ Tuning reset to defaults!');
+                logger.info('Reset tuning to defaults');
+            } catch (e) {
+                console.error('Error resetting tuning:', e);
+                alert('❌ Error resetting tuning settings');
+            }
+        };
+        
+        // Load tuning on page load
+        loadTuningSettings();
 
         // ══════════════════════════════════════
         // POLLING

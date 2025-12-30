@@ -1,6 +1,6 @@
 """
 Voice Assistant Module for Interactive Reachy Robot
-Provides microphone input, STT (Whisper), LLM (Qwen3), and TTS (Piper) capabilities.
+Provides microphone input, STT (Whisper), LLM (Local/OpenAI/OLLAMA), and TTS (Piper) capabilities.
 """
 
 import threading
@@ -12,6 +12,7 @@ import numpy as np
 import soundfile as sf
 from typing import Optional, Callable
 from pathlib import Path
+from llm_config import get_llm_config_manager
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,15 @@ Rules:
                 logger.info("[PRELOAD] Starting model preload in background...")
                 self._load_whisper()
                 self._load_piper()
-                self._load_llm()
+                # Only load local LLM if it's the configured provider
+                from llm_config import get_llm_config_manager
+                llm_config = get_llm_config_manager()
+                if llm_config.get_current_provider() == "local":
+                    self._load_llm()
+                    logger.info("[PRELOAD] Local LLM loaded.")
+                else:
+                    provider = llm_config.get_current_provider()
+                    logger.info(f"[PRELOAD] Skipping local LLM load (using {provider} provider).")
                 logger.info("[PRELOAD] All models preloaded successfully.")
             except Exception as e:
                 logger.error(f"[PRELOAD] Background preload failed: {e}")
@@ -119,7 +128,17 @@ Rules:
         return self._whisper_model
     
     def _load_llm(self):
-        """Load Qwen3 model for conversational AI"""
+        """Load local LLM model for conversational AI (only if local provider is configured)"""
+        # Check if local provider is configured before loading
+        try:
+            from llm_config import get_llm_config_manager
+            llm_config = get_llm_config_manager()
+            if llm_config.get_current_provider() != "local":
+                logger.info(f"[LLM] Skipping local model load (using {llm_config.get_current_provider()} provider)")
+                return None, None  # Return tuple of Nones instead of None
+        except Exception as e:
+            logger.warning(f"[LLM] Could not check provider config, proceeding with local load: {e}")
+        
         if self._llm_model is None:
             try:
                 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -432,9 +451,30 @@ Rules:
                 if self.on_speech_detected:
                     self.on_speech_detected(text)
                 
-                # Step 2: Generate response (Qwen3)
+                # Step 2: Generate response - check LLM provider
                 logger.info("Generating response...")
-                response = self._generate_response(text, llm, tokenizer)
+                llm_config = get_llm_config_manager()
+                provider = llm_config.get_current_provider()
+                
+                if provider == "openai":
+                    response = self._generate_response_openai(text)
+                elif provider == "ollama":
+                    response = self._generate_response_ollama(text)
+                elif provider == "local":
+                    # Only generate local response if models are loaded
+                    if llm is None or tokenizer is None:
+                        logger.error("Local LLM models not loaded but local provider is selected")
+                        response = "I'm sorry, but the local AI model isn't ready yet. Please try again in a moment."
+                    else:
+                        response = self._generate_response(text, llm, tokenizer)
+                else:
+                    logger.error(f"Unknown provider: {provider}")
+                    response = None
+                
+                if not response:
+                    logger.error("Failed to generate response")
+                    continue
+                
                 logger.info(f"Response: {response}")
                 
                 # Notify callback
@@ -477,6 +517,126 @@ Rules:
         except Exception as e:
             logger.error(f"Transcription error: {e}", exc_info=True)
             return ""
+    
+    def _generate_response_openai(self, user_text: str) -> str:
+        """Generate response using OpenAI API."""
+        try:
+            import openai
+            
+            llm_config = get_llm_config_manager()
+            api_key = llm_config.get_openai_key()
+            config = llm_config.get_current_config()
+            model = config.get("model", "gpt-3.5-turbo")
+            
+            if not api_key:
+                logger.error("OpenAI API key not configured")
+                return None
+            
+            client = openai.OpenAI(api_key=api_key)
+            
+            # Add user message to history
+            self.conversation_history.append({"role": "user", "content": user_text})
+            
+            # Keep last 8 messages for context
+            if len(self.conversation_history) > 8:
+                self.conversation_history = self.conversation_history[-8:]
+            
+            logger.info(f"OpenAI API call: model={model}")
+            
+            # GPT-5 and newer o-series models use max_completion_tokens instead of max_tokens
+            use_completion_tokens = any(model.startswith(prefix) for prefix in ["gpt-5", "o1", "o3", "o4"])
+            
+            # GPT-5 and o-series models don't support custom temperature (only default=1)
+            supports_temperature = not any(model.startswith(prefix) for prefix in ["gpt-5", "o1", "o3", "o4"])
+            
+            kwargs = {
+                "model": model,
+                "messages": self.conversation_history,
+            }
+            
+            if supports_temperature:
+                kwargs["temperature"] = 0.7
+            
+            if use_completion_tokens:
+                # GPT-5 supports up to 128k output tokens; use 8k for excellent reasoning + context processing + output
+                kwargs["max_completion_tokens"] = 8192
+            else:
+                kwargs["max_tokens"] = 256
+            
+            response = client.chat.completions.create(**kwargs)
+            
+            logger.info(f"OpenAI raw response: {response}")
+            logger.info(f"Response choices: {response.choices}")
+            
+            if not response.choices:
+                logger.error("No choices in OpenAI response")
+                return None
+            
+            assistant_response = response.choices[0].message.content
+            
+            if not assistant_response:
+                logger.error("Empty content in OpenAI response")
+                return None
+            
+            assistant_response = assistant_response.strip()
+            
+            if not assistant_response:
+                logger.error("OpenAI response was empty after stripping")
+                return None
+            
+            self.conversation_history.append({"role": "assistant", "content": assistant_response})
+            
+            logger.info(f"OpenAI response: {assistant_response[:100]}...")
+            return assistant_response
+        
+        except Exception as e:
+            logger.error(f"OpenAI API error: {e}", exc_info=True)
+            return None
+    
+    def _generate_response_ollama(self, user_text: str) -> str:
+        """Generate response using OLLAMA endpoint."""
+        try:
+            import requests
+            
+            llm_config = get_llm_config_manager()
+            config = llm_config.get_current_config()
+            endpoint = config.get("endpoint", "http://localhost:11434")
+            model = config.get("model", "llama2")
+            
+            # Add user message to history
+            self.conversation_history.append({"role": "user", "content": user_text})
+            
+            # Keep last 8 messages for context
+            if len(self.conversation_history) > 8:
+                self.conversation_history = self.conversation_history[-8:]
+            
+            # Prepare prompt from conversation
+            prompt = ""
+            for msg in self.conversation_history:
+                role = "You" if msg["role"] == "assistant" else "User"
+                prompt += f"{role}: {msg['content']}\n"
+            prompt += "You: "
+            
+            logger.info(f"OLLAMA API call: endpoint={endpoint}, model={model}")
+            url = f"{endpoint.rstrip('/')}/api/generate"
+            response = requests.post(
+                url,
+                json={"model": model, "prompt": prompt, "stream": False},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                assistant_response = response.json().get("response", "").strip()
+                self.conversation_history.append({"role": "assistant", "content": assistant_response})
+                logger.info(f"OLLAMA response: {assistant_response[:100]}...")
+                return assistant_response
+            else:
+                logger.error(f"OLLAMA error: {response.status_code}")
+                return None
+        
+        except Exception as e:
+            logger.error(f"OLLAMA error: {e}", exc_info=True)
+            return None
     
     def _generate_response(self, user_text: str, model, tokenizer) -> str:
         """Generate conversational response using Qwen3"""
@@ -655,7 +815,25 @@ Rules:
         """Clean generated text: remove invalid chars, collapse repeats, and fallback."""
         if not text:
             return "I heard you. How can I help?"
-        s = text.strip()
+        s = text.strip()        
+        # Sanitize Unicode characters that Piper/espeak can't handle
+        # Replace smart quotes with regular quotes
+        s = s.replace('"', '"').replace('"', '"')  # Left and right double quotes
+        s = s.replace(''', "'").replace(''', "'")  # Left and right single quotes
+        # Replace em dashes and en dashes with regular hyphens
+        s = s.replace('—', '-').replace('–', '-')
+        # Replace ellipsis with periods
+        s = s.replace('…', '...')
+        
+        # Remove any remaining problematic Unicode characters by encoding/decoding
+        # This converts non-ASCII characters to their closest ASCII equivalent or removes them
+        try:
+            # First try: encode to ASCII, replacing unknown characters with '?'
+            s = s.encode('ascii', errors='replace').decode('ascii')
+        except Exception:
+            # Fallback: remove all non-ASCII characters
+            s = ''.join(char if ord(char) < 128 else '' for char in s)
+        
         # Remove replacement chars and non-printables
         s = s.replace("\ufffd", "")
         s = re.sub(r"[\x00-\x1F]", " ", s)
@@ -715,6 +893,20 @@ Rules:
                 logger.error(f"Piper TTS error: {stderr}")
                 return
             
+            # Ensure file is written and flushed to disk before playback
+            # Wait up to 2 seconds for the file to exist and be readable
+            import os
+            file_ready = False
+            for attempt in range(20):  # 20 * 0.1s = 2 seconds max
+                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    file_ready = True
+                    break
+                time.sleep(0.1)
+            
+            if not file_ready:
+                logger.error(f"TTS audio file not created or empty: {output_path}")
+                return
+            
             # Play audio through robot speakers (async to avoid blocking)
             if self.robot:
                 # Use threading to prevent blocking the voice processing loop
@@ -748,10 +940,29 @@ Rules:
         """Process a text command directly (bypass STT)"""
         try:
             llm, tokenizer = self._load_llm()
-            response = self._generate_response(text, llm, tokenizer)
-            return response
+            
+            # Route through appropriate LLM provider
+            llm_config = get_llm_config_manager()
+            provider = llm_config.get_current_provider()
+            
+            if provider == "openai":
+                response = self._generate_response_openai(text)
+            elif provider == "ollama":
+                response = self._generate_response_ollama(text)
+            elif provider == "local":
+                # Only generate local response if models are loaded
+                if llm is None or tokenizer is None:
+                    logger.error("Local LLM models not loaded but local provider is selected")
+                    response = "I'm sorry, but the local AI model isn't ready yet. Please try again in a moment."
+                else:
+                    response = self._generate_response(text, llm, tokenizer)
+            else:
+                logger.error(f"Unknown provider: {provider}")
+                response = None
+            
+            return response or "Sorry, I couldn't generate a response."
         except Exception as e:
-            logger.error(f"Command processing error: {e}")
+            logger.error(f"Command processing error: {e}", exc_info=True)
             return "Sorry, I couldn't process that command."
     
     def speak_text(self, text: str):

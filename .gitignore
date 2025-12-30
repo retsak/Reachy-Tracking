@@ -6,3 +6,6 @@ __pycache__/
 
 # AI Models (download via setup script)
 models/
+# LLM Configuration (contains API keys and sensitive data)
+.llm_config.json
+voice_error.log

@@ -6,6 +6,7 @@ import os
 import signal
 import sys
 import logging
+import json
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +18,7 @@ from robot_controller import RobotController
 from detection_engine import DetectionEngine
 from simple_tracker import SimpleTracker
 from voice_assistant import get_assistant
+from llm_config import get_llm_config_manager
 
 # Configure logging
 logging.basicConfig(
@@ -38,6 +40,27 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(lifespan=lifespan)
+
+# Custom logging middleware to control verbosity
+@app.middleware("http")
+async def log_requests_middleware(request, call_next):
+    """Control request logging based on endpoint and verbose setting."""
+    global VERBOSE_LOGGING
+    
+    response = await call_next(request)
+    
+    # Skip logging for /status unless verbose logging is enabled
+    if request.url.path == "/status" and not VERBOSE_LOGGING:
+        return response
+    
+    # Log other requests (or /status when verbose)
+    status_code = response.status_code
+    method = request.method
+    path = request.url.path
+    logger.info(f"{method:6s} {path:40s} {status_code}")
+    
+    return response
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Globals
@@ -48,6 +71,7 @@ SERVER_STATE = {
     "paused": True, 
     "wiggle_enabled": False
 } # Default Paused, Wiggle OFF
+VERBOSE_LOGGING = False  # Control logging verbosity
 LATEST_CANDIDATES = []
 current_target_id = None
 trackable_objects = {}
@@ -81,7 +105,29 @@ TUNING = {
     "min_score_threshold": 250.0,
     "recenter_timeout": 2.0
 }
+TUNING_FILE = ".tuning_config.json"
 JPEG_QUALITY = 70
+
+def _load_tuning_settings():
+    """Load tuning settings from file if exists."""
+    global TUNING
+    if os.path.exists(TUNING_FILE):
+        try:
+            with open(TUNING_FILE, 'r') as f:
+                saved_tuning = json.load(f)
+                TUNING.update(saved_tuning)
+                logger.info(f"Loaded tuning settings from {TUNING_FILE}")
+        except Exception as e:
+            logger.warning(f"Failed to load tuning settings: {e}")
+
+def _save_tuning_settings():
+    """Save tuning settings to file."""
+    try:
+        with open(TUNING_FILE, 'w') as f:
+            json.dump(TUNING, f, indent=2)
+        logger.info(f"Saved tuning settings to {TUNING_FILE}")
+    except Exception as e:
+        logger.error(f"Failed to save tuning settings: {e}")
 
 def _create_tracker():
     """Create a lightweight OpenCV tracker (KCF/MOSSE) for the primary target."""
@@ -672,6 +718,9 @@ async def set_tuning(new_tuning: dict):
         elif k not in TUNING:
             errors.append(f"{k}: unknown parameter (ignored)")
     
+    # Save to file for persistence
+    _save_tuning_settings()
+    
     response = {"tuning": TUNING, "updated": updated}
     if errors:
         response["warnings"] = errors
@@ -841,9 +890,165 @@ async def speak_text(data: dict):
         logger.error(f"TTS error: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
 
+
+# ══════════════════════════════════════
+# LLM CONFIGURATION ROUTES
+# ══════════════════════════════════════
+
+@app.get("/api/llm/models/local")
+async def get_local_models():
+    """Get list of available local models."""
+    try:
+        llm_config = get_llm_config_manager()
+        models = llm_config.get_local_models()
+        current = llm_config.get_current_config()
+        # Mark current model
+        for m in models:
+            if m["id"] == current.get("model_id"):
+                m["current"] = True
+        return {"models": models}
+    except Exception as e:
+        logger.error(f"Error fetching local models: {e}")
+        return {"models": [], "error": str(e)}
+
+
+@app.get("/api/llm/models/ollama")
+async def get_ollama_models(endpoint: str = "http://localhost:11434"):
+    """Get list of OLLAMA models from endpoint."""
+    try:
+        llm_config = get_llm_config_manager()
+        models, error = llm_config.get_ollama_models(endpoint)
+        if error:
+            return {"models": [], "error": error}
+        return {"models": models}
+    except Exception as e:
+        logger.error(f"Error fetching OLLAMA models: {e}")
+        return {"models": [], "error": str(e)}
+
+
+@app.post("/api/llm/models/openai")
+async def get_openai_models(data: dict):
+    """Get list of OpenAI models and pricing."""
+    try:
+        api_key = data.get("api_key")
+        
+        # If api_key is None, use the stored key from config
+        if api_key is None:
+            llm_config = get_llm_config_manager()
+            api_key = llm_config.get_openai_key()
+        
+        if not api_key:
+            return {"models": [], "error": "API key required"}
+        
+        llm_config = get_llm_config_manager()
+        models, pricing = llm_config.get_openai_models(api_key)
+        
+        # Format pricing for display with category
+        pricing_display = [
+            {
+                "model": p["name"],
+                "category": p.get("category", "Standard"),
+                "input_price": f"${p['input']:.4f}",
+                "output_price": f"${p['output']:.2f}",
+                "cost_per_1m": f"${p['input'] * 1000:.2f} / ${p['output'] * 1000:.2f}"
+            }
+            for p in pricing
+        ]
+        
+        return {"models": models, "pricing": pricing_display}
+    except Exception as e:
+        logger.error(f"Error fetching OpenAI models: {e}")
+        return {"models": [], "error": str(e)}
+
+
+@app.post("/api/llm/validate-key")
+async def validate_api_key(data: dict):
+    """Validate API key for a provider."""
+    try:
+        provider = data.get("provider", "openai")
+        api_key = data.get("api_key")
+        
+        if not api_key:
+            return {"valid": False, "error": "API key required"}
+        
+        if provider == "openai":
+            llm_config = get_llm_config_manager()
+            valid, msg = llm_config.validate_openai_key(api_key)
+            return {"valid": valid, "error": msg if not valid else None}
+        
+        return {"valid": False, "error": f"Provider {provider} validation not implemented"}
+    except Exception as e:
+        logger.error(f"Key validation error: {e}")
+        return {"valid": False, "error": str(e)}
+
+
+@app.post("/api/llm/config")
+async def save_llm_config(data: dict):
+    """Save LLM provider configuration."""
+    try:
+        provider = data.get("provider")
+        config = data.get("config", {})
+        
+        if not provider:
+            return {"success": False, "error": "Provider required"}
+        
+        llm_config = get_llm_config_manager()
+        success, message = llm_config.set_provider_config(provider, config)
+        
+        if success:
+            logger.info(f"LLM config updated: provider={provider}")
+            return {"success": True, "message": message}
+        else:
+            return {"success": False, "error": message}
+    except Exception as e:
+        logger.error(f"Error saving LLM config: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/llm/status")
+async def get_llm_status():
+    """Get current LLM provider and model info."""
+    try:
+        llm_config = get_llm_config_manager()
+        provider = llm_config.get_current_provider()
+        config = llm_config.get_current_config()
+        
+        # Check if OpenAI API key is saved (without exposing it)
+        has_api_key = "api_key" in config and config.get("api_key") is not None
+        
+        safe_config = {k: v for k, v in config.items() if k != "api_key"}
+        if has_api_key and provider == "openai":
+            safe_config["has_api_key"] = True
+        
+        return {
+            "provider": provider,
+            "config": safe_config
+        }
+    except Exception as e:
+        logger.error(f"Error fetching LLM status: {e}")
+        return {"error": str(e)}
+
+
+@app.post("/api/settings/verbose")
+async def set_verbose_logging(data: dict):
+    """Enable/disable verbose logging."""
+    global VERBOSE_LOGGING
+    try:
+        VERBOSE_LOGGING = data.get("verbose", False)
+        logger.info(f"Verbose logging: {'enabled' if VERBOSE_LOGGING else 'disabled'}")
+        return {"success": True, "verbose": VERBOSE_LOGGING}
+    except Exception as e:
+        logger.error(f"Error setting verbose logging: {e}")
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     logger.info("Starting server on port 8082...")
     logger.info("Use http://localhost:8082/ to access the web interface.")
+    
+    # Load saved tuning settings
+    _load_tuning_settings()
+    
     webbrowser.open("http://localhost:8082/")    
     robot.connect()
     
@@ -858,4 +1063,4 @@ if __name__ == "__main__":
     threading.Thread(target=detection_loop, daemon=True).start()
     threading.Thread(target=connection_monitor_loop, daemon=True).start()
     threading.Thread(target=video_stream_loop, daemon=True).start()
-    uvicorn.run(app, host="0.0.0.0", port=8082)
+    uvicorn.run(app, host="0.0.0.0", port=8082, access_log=False)
