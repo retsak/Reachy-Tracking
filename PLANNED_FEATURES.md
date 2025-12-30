@@ -416,12 +416,32 @@ Future enhancements and improvements for the Reachy Tracking & Control system.
 
 ---
 
-## Contributing
+## Personal Development Notes
 
-Interested in implementing a planned feature? See the main README for contribution guidelines.
+Areas for potential focus (priority order):
 
-Priority areas for contribution:
-- GPU acceleration (CUDA/DirectML)
-- WebSocket telemetry
-- Voice command grammar
-- Test coverage improvement
+### Quick Wins
+
+- Manual control sensitivity adjustment (UI + backend)
+- Live logs panel in dashboard (WebSocket streaming)
+- Status enrichment (confidence, FPS, model latency)
+
+### Core Improvements
+
+- GPU acceleration (CUDA/DirectML) - Would significantly improve voice latency
+- Process isolation - Would eliminate video frame drops during voice processing
+- WebSocket telemetry - Cleaner architecture than polling
+
+### Advanced Features
+
+- Voice command grammar - Full hands-free control
+- Wake word detection - More natural interaction
+- Conversation memory system - Persistent context
+- Patrol/auto-scan - More engaging idle behavior
+
+### Long-term
+
+- Multi-language support
+- Skills/plugins system
+- Advanced camera features (multi-camera, PTZ)
+- Comprehensive test suite and CI
