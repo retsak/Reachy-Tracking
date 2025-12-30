@@ -382,9 +382,10 @@ input[type="range"]::-webkit-slider-thumb:hover {
    ══════════════════════════════════════ */
 .sidebar-right {
     display: grid;
-    grid-template-rows: 1fr auto;
+    grid-template-rows: 1fr 200px; /* Chat gets remaining space, tracking gets fixed 200px */
     gap: 1px;
     background: var(--border);
+    overflow: hidden; /* Prevent sidebar from expanding beyond viewport */
 }
 
 /* Chat */
@@ -393,6 +394,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
     display: flex;
     flex-direction: column;
     min-height: 0; /* Critical: allows flex child to shrink below content size */
+    overflow: hidden; /* Contain scrolling within panel */
 }
 
 .chat-messages {
@@ -487,7 +489,15 @@ input[type="range"]::-webkit-slider-thumb:hover {
 /* Data Panel */
 .data-panel {
     background: var(--surface);
-    max-height: 200px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* Contain content within 200px height */
+}
+
+.data-panel .panel-content {
+    flex: 1;
+    overflow-y: auto; /* Allow scrolling if many candidates */
+    min-height: 0;
 }
 
 .data-table {

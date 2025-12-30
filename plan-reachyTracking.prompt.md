@@ -91,3 +91,10 @@ Dependencies & Risks
 - Piper availability on Windows: require PATH setup; provide Python binding fallback.
 - Microphone access conflicts: ensure exclusive device handling; backoff + retry.
 
+Known Issues
+- **Long Audio Playback Truncation**: Audio clips >30 seconds may stop playing before completion despite correct duration calculations. The SDK's `MediaManager.push_audio_sample()` successfully queues all samples (~694K samples for 31.5s audio), but playback terminates early. Root cause investigation needed:
+  - SDK buffer underrun: Media pipeline may not buffer properly for extended clips
+  - Context manager lifecycle: `with SDKReachyMini()` block might release resources prematurely
+  - Chunk pacing: Current 1024-sample chunks pushed as fast as possible may overwhelm buffer
+  - Motion thread timing: Speaking animation thread may timeout before playback completes
+  - Potential solutions: Monitor SDK buffer status, add inter-chunk delays, use SDK's internal playback completion signals if available, or chunk long responses into multiple <20s segments. Current workaround: Limit response length in LLM system prompt.

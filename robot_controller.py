@@ -775,12 +775,29 @@ class RobotController:
                         mini.media.start_playing()
                         print(f"[AUDIO] Playing {len(data)} samples at {output_rate} Hz...")
                         
-                        # Push samples in chunks
+                        # Push samples in chunks with pacing to prevent buffer overflow
                         chunk_size = 1024
                         start_push_time = time.time()
-                        for i in range(0, len(data), chunk_size):
+                        total_chunks = (len(data) + chunk_size - 1) // chunk_size
+                        
+                        # For very long audio, pace the chunk pushing to avoid buffer overflow
+                        # Target: push at ~2x real-time speed to stay ahead but not flood buffer
+                        chunk_duration = chunk_size / float(output_rate)
+                        target_push_interval = chunk_duration / 2.0  # Push at 2x speed
+                        
+                        for chunk_idx, i in enumerate(range(0, len(data), chunk_size)):
                             chunk = data[i : i + chunk_size]
                             mini.media.push_audio_sample(chunk)
+                            
+                            # Add small delay between chunks for long audio to prevent buffer issues
+                            if len(data) > 200000:  # For audio > ~9 seconds
+                                time.sleep(target_push_interval)
+                            
+                            # Progress logging every 25%
+                            if chunk_idx % max(1, total_chunks // 4) == 0:
+                                percent = (chunk_idx / total_chunks) * 100
+                                print(f"[AUDIO] Pushed {percent:.0f}% ({chunk_idx}/{total_chunks} chunks)")
+                        
                         push_duration = time.time() - start_push_time
                         print(f"[AUDIO] Pushed all samples in {push_duration:.2f}s")
 
@@ -788,11 +805,23 @@ class RobotController:
                         # Calculate total duration and subtract time already spent pushing
                         playback_duration = len(data) / float(output_rate)
                         remaining_duration = max(0, playback_duration - push_duration)
-                        print(f"[AUDIO] Total duration: {playback_duration:.2f}s, waiting {remaining_duration + 1.0:.2f}s more...")
-                        time.sleep(remaining_duration + 1.0)  # Extra second for buffer
+                        
+                        # Add extra buffer time proportional to audio length (minimum 1s, up to 3s for very long audio)
+                        buffer_time = min(3.0, 1.0 + (playback_duration / 30.0))
+                        total_wait = remaining_duration + buffer_time
+                        
+                        print(f"[AUDIO] Total duration: {playback_duration:.2f}s, already elapsed: {push_duration:.2f}s")
+                        print(f"[AUDIO] Waiting {total_wait:.2f}s for playback (buffer: {buffer_time:.2f}s)...")
+                        
+                        # Wait in smaller intervals to allow for early termination if needed
+                        wait_start = time.time()
+                        while time.time() - wait_start < total_wait:
+                            time.sleep(0.5)
+                            # Could add buffer level check here if SDK provides it
                         
                         mini.media.stop_playing()
-                        print(f"[AUDIO] Playback complete: {filepath}")
+                        actual_elapsed = time.time() - start_push_time
+                        print(f"[AUDIO] Playback complete: {filepath} (total time: {actual_elapsed:.2f}s)")
                         
                         # Success - break retry loop
                         break
