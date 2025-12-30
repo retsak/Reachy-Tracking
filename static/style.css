@@ -944,12 +944,15 @@ body {
 
 .emotion-actions {
     display: grid;
-    grid-template-columns: 1fr;
-    gap: 8px;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 4px;
 }
 
 .emotion-actions .action-btn {
     justify-content: center;
+    padding: 6px;
+    font-size: 18px;
+    aspect-ratio: 1;
 }
 
 .voice-controls {

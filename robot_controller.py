@@ -927,6 +927,183 @@ class RobotController:
                 time.sleep(2.0)
                 reset(1.0)
 
+            elif emotion_name == "excited":
+                # Rapid antenna bouncing + head tilts
+                for _ in range(4):
+                    self.set_pose(head_roll=15, antenna_left=200, antenna_right=200, duration=0.2)
+                    time.sleep(0.2)
+                    self.set_pose(head_roll=-15, antenna_left=-100, antenna_right=-100, duration=0.2)
+                    time.sleep(0.2)
+                reset(0.5)
+
+            elif emotion_name == "angry":
+                # Eyes forward, antenna pointed down, head slightly forward
+                self.set_pose(head_pitch=15, antenna_left=300, antenna_right=300, duration=0.8)
+                time.sleep(1.5)
+                reset(0.8)
+
+            elif emotion_name == "surprised":
+                # Head back + antenna up
+                self.set_pose(head_pitch=-25, antenna_left=-200, antenna_right=-200, duration=0.5)
+                time.sleep(0.5)
+                self.set_pose(head_pitch=-25, antenna_left=50, antenna_right=50, duration=0.3)
+                time.sleep(1.0)
+                reset(0.5)
+
+            elif emotion_name == "love":
+                # Heart pattern: gentle rocking with antennas out
+                for _ in range(3):
+                    self.set_pose(head_roll=15, antenna_left=150, antenna_right=-150, duration=0.3)
+                    time.sleep(0.3)
+                    self.set_pose(head_roll=-15, antenna_left=-150, antenna_right=150, duration=0.3)
+                    time.sleep(0.3)
+                reset(0.5)
+
+            elif emotion_name == "thinking":
+                # Head tilt + antenna raised, slow movements
+                self.set_pose(head_roll=20, head_pitch=5, antenna_left=100, antenna_right=50, duration=1.0)
+                time.sleep(2.0)
+                reset(1.0)
+
+            elif emotion_name == "cool":
+                # Slight head tilt back, antennas relaxed
+                self.set_pose(head_pitch=-10, head_roll=5, antenna_left=0, antenna_right=0, duration=0.8)
+                time.sleep(2.0)
+                reset(0.8)
+
+            elif emotion_name == "yay":
+                # Jump! (head up + antenna up)
+                self.set_pose(head_pitch=-30, antenna_left=-200, antenna_right=-200, duration=0.3)
+                time.sleep(0.3)
+                self.set_pose(head_pitch=10, antenna_left=100, antenna_right=100, duration=0.3)
+                time.sleep(0.3)
+                reset(0.5)
+
+            elif emotion_name == "nervous":
+                # Jittery movements: fast head rocks + antenna tremor
+                for _ in range(6):
+                    self.set_pose(head_roll=10, antenna_left=120, antenna_right=80, duration=0.15)
+                    time.sleep(0.15)
+                    self.set_pose(head_roll=-10, antenna_left=80, antenna_right=120, duration=0.15)
+                    time.sleep(0.15)
+                reset(0.5)
+
+            elif emotion_name == "sick":
+                # Head tilted down + one antenna droops
+                self.set_pose(head_pitch=25, head_roll=15, antenna_left=250, antenna_right=150, duration=1.0)
+                time.sleep(2.0)
+                reset(1.0)
+
+            elif emotion_name == "sleeping":
+                # Head droops down, antennas relax
+                self.set_pose(head_pitch=30, head_roll=20, antenna_left=150, antenna_right=150, duration=1.5)
+                time.sleep(3.0)
+                reset(2.0)
+
+            elif emotion_name == "party":
+                # Spin + bounce: head circles + antenna waves
+                for _ in range(2):
+                    self.set_pose(head_yaw=25, head_pitch=-15, antenna_left=-150, antenna_right=150, duration=0.3)
+                    time.sleep(0.3)
+                    self.set_pose(head_yaw=-25, head_pitch=10, antenna_left=150, antenna_right=-150, duration=0.3)
+                    time.sleep(0.3)
+                reset(0.5)
+
+            elif emotion_name == "clap":
+                # Antenna clap: both antennas swing together
+                self.set_pose(antenna_left=-200, antenna_right=200, duration=0.2)
+                time.sleep(0.2)
+                self.set_pose(antenna_left=200, antenna_right=-200, duration=0.2)
+                time.sleep(0.2)
+                self.set_pose(antenna_left=-200, antenna_right=200, duration=0.2)
+                time.sleep(0.2)
+                reset(0.3)
+
+            elif emotion_name == "thumbsup":
+                # Head nod + right antenna up
+                self.set_pose(antenna_right=-200, antenna_left=50, head_pitch=-10, duration=0.5)
+                time.sleep(0.5)
+                self.set_pose(antenna_right=-200, antenna_left=50, head_pitch=10, duration=0.3)
+                time.sleep(0.3)
+                reset(0.5)
+
+            elif emotion_name == "thumbsdown":
+                # Head shake + antenna down
+                self.set_pose(antenna_left=250, antenna_right=250, head_pitch=20, duration=0.5)
+                time.sleep(0.5)
+                self.set_pose(antenna_left=250, antenna_right=250, head_yaw=15, duration=0.3)
+                time.sleep(0.3)
+                reset(0.5)
+
+            elif emotion_name == "wave":
+                # Right antenna waves
+                for _ in range(4):
+                    self.set_pose(antenna_right=-150, duration=0.2)
+                    time.sleep(0.2)
+                    self.set_pose(antenna_right=100, duration=0.2)
+                    time.sleep(0.2)
+                reset(0.3)
+
+            elif emotion_name == "dance":
+                # Body sway + antenna rhythm
+                for _ in range(3):
+                    self.set_pose(head_roll=20, body_yaw=15, antenna_left=100, antenna_right=-100, duration=0.4)
+                    time.sleep(0.4)
+                    self.set_pose(head_roll=-20, body_yaw=-15, antenna_left=-100, antenna_right=100, duration=0.4)
+                    time.sleep(0.4)
+                reset(0.5)
+
+            elif emotion_name == "celebration":
+                # Both antenna up + head back (celebration pose)
+                self.set_pose(head_pitch=-20, antenna_left=-200, antenna_right=-200, duration=0.5)
+                time.sleep(0.5)
+                self.set_pose(head_pitch=-20, antenna_left=-180, antenna_right=-180, duration=0.2)
+                time.sleep(0.5)
+                reset(0.5)
+
+            elif emotion_name == "curious":
+                # Head forward + one antenna up
+                self.set_pose(head_pitch=-15, antenna_left=-150, antenna_right=100, duration=0.8)
+                time.sleep(2.0)
+                reset(0.8)
+
+            elif emotion_name == "grimace":
+                # Head wrinkle: antenna squeeze
+                self.set_pose(antenna_left=300, antenna_right=300, head_pitch=10, duration=0.5)
+                time.sleep(0.5)
+                self.set_pose(antenna_left=250, antenna_right=250, head_pitch=15, duration=0.3)
+                time.sleep(0.5)
+                reset(0.5)
+
+            elif emotion_name == "scared":
+                # Head back + antenna up (defensive)
+                self.set_pose(head_pitch=-20, head_roll=0, antenna_left=-180, antenna_right=-180, duration=0.3)
+                time.sleep(0.5)
+                self.set_pose(head_pitch=-20, antenna_left=-150, antenna_right=-150, duration=0.2)
+                time.sleep(0.5)
+                reset(0.5)
+
+            elif emotion_name == "tired":
+                # Slow droop: head down, antenna relax
+                self.set_pose(head_pitch=20, antenna_left=100, antenna_right=100, duration=1.5)
+                time.sleep(2.5)
+                reset(1.5)
+
+            elif emotion_name == "peaceful":
+                # Gentle sway: slow head rock, minimal antenna
+                for _ in range(2):
+                    self.set_pose(head_roll=10, antenna_left=50, antenna_right=-50, duration=0.8)
+                    time.sleep(0.8)
+                    self.set_pose(head_roll=-10, antenna_left=-50, antenna_right=50, duration=0.8)
+                    time.sleep(0.8)
+                reset(0.5)
+
+            elif emotion_name == "wink":
+                # Quick eye gesture: head tilt + antenna flash
+                self.set_pose(head_roll=15, antenna_left=150, duration=0.2)
+                time.sleep(0.3)
+                reset(0.3)
+
         threading.Thread(target=run_emotion, daemon=True).start()
 
     def _play_sound_sync(self, filename: str):
