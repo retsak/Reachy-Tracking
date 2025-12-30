@@ -1,26 +1,60 @@
 # Reachy Tracking & Control
 
-An autonomous tracking and control system for the Reachy robot, designed to detect and follow objects (faces, people, cats) using a hybrid tracking approach (YOLOv8 + Object Tracking + Sound). It provides a web-based dashboard for monitoring and manual control.
+An autonomous tracking and control system for the Reachy robot with integrated voice assistant, emotion system, and visual themes. Detects and follows objects (faces, people, cats) using a hybrid tracking approach (YOLOv8 + Object Tracking), provides natural voice interaction, and features a customizable web dashboard.
 
 ## Features
 
-- **Autonomous Tracking**: Detects and centers on targets using the robot's head.
+### 🎯 Autonomous Tracking
 - **Hybrid Tracking Engine**:
-    - **YOLOv8**: For object detection (Person, Cat). Model stored in `models/yolov8n.onnx`.
-    - **Haar Cascades**: For fast face detection.
-    - **Visual Tracking (KCF/CSRT)**: Locks onto targets for smooth following.
-    - **Ghosting Prevention**: Automatically resets tracking memory on robot movement.
-- **Audio Interaction**:
-    - **Greeting**: Plays a greeting sound ("What can I do for you?") upon initial detection. Reset logic ensures it only plays once per engagement session.
-- **Web Dashboard**:
-    - **Live Video Feed**: Annotated with detection boxes and status.
-    - **Manual Control**: Full control over Head (Pitch/Roll/Yaw), Body (Yaw), and Antennas via sliders.
-    - **Live Telemetry**: Sliders sync in real-time with the robot's physical position (even when paused).
-    - **Motor Modes**: Toggle between Stiff, Soft, and Limp modes.
-    - **Wiggle Mode**: Toggle "happy" antenna wiggles.
-- **State Management**:
-    - **Pause/Resume**: Stop tracking to take manual control.
-    - **Wiggle Toggle**: Enable/disable automatic idle animations.
+    - **YOLOv8**: Object detection (Person, Cat). Model stored in `models/yolov8n.onnx`.
+    - **Haar Cascades**: Fast face detection.
+    - **Visual Tracking (KCF)**: Smooth target following with automatic memory reset on robot movement.
+    - **Ghosting Prevention**: Resets tracking state after head movements to prevent following stale targets.
+- **Smart Aiming**: Automatically targets head position for people, center for faces/cats.
+- **Auto-Resume**: Tracking pauses during manual control and speech, then automatically resumes.
+
+### 🎤 Voice Assistant
+- **Natural Conversation**: Full voice interaction with conversational AI.
+- **Multi-Provider LLM Support**: 
+    - **OpenAI** (GPT-3.5, GPT-4, GPT-5)
+    - **Ollama** (local models like Llama 2)
+    - **Local** (Gemma 2B, Phi-3, Qwen 2.5)
+- **Speech Pipeline**: STT (Whisper) → LLM → TTS (Piper)
+- **Smart Chunking**: Long responses automatically split into natural sentence chunks.
+- **Conversation Memory**: Maintains context across conversation turns.
+- **Synchronized Motion**: Head movements pause during speech, smooth animation with speaking gestures.
+
+### 🎭 Emotion System
+- **25 Expressive Emotions**: Complete choreographed motions including:
+    - Basic: Happy, Sad, Surprised, Angry, Confused, Scared, Excited, Bored, Shy
+    - Social: Greeting, Waving, Nodding, Shaking Head, Shrugging
+    - Playful: Silly, Curious, Thinking, Dancing, Wiggle
+    - Advanced: Love, Sleepy, Proud, Disappointed, Mischievous, Focused, Yawn
+- **One-Click Triggers**: Instant emotion playback from dashboard.
+- **Natural Animations**: Each emotion includes coordinated head and antenna movements.
+
+### 🎨 Visual Themes
+- **18 Beautiful Themes**: Dark, Light, Ocean, Forest, Hacker, Halloween, Christmas, New Year, Sunset, Cyberpunk, Midnight, Lavender, Retro, Arctic, Volcano, Synthwave, Coffee, Cherry Blossom
+- **Animated Elements**: Special themes feature animated effects:
+    - **Unicorn Theme**: Gradient rainbow effects
+    - **Nyan Cat Theme**: Animated flying cat with rainbow trail across the screen
+- **Persistent Selection**: Theme preference saved between sessions.
+
+### 🌐 Web Dashboard
+- **Live Video Feed**: Real-time annotated stream with detection boxes and status.
+- **Manual Control**: Full control over Head (Pitch/Roll/Yaw), Body (Yaw), and Antennas.
+- **Live Telemetry**: Position sliders sync in real-time with robot's physical state.
+- **Tuning Panel**: Advanced configuration for tracking sensitivity, intervals, and behavior.
+- **Motor Modes**: Toggle between Stiff, Soft, and Limp modes.
+- **Voice Interface**: Text chat and voice activation controls.
+- **Emotion Palette**: Quick-access grid for all 25 emotions.
+
+### ⚙️ Advanced Features
+- **Dynamic Tuning**: Real-time adjustment of tracking parameters without restart.
+- **Persistent Configuration**: All settings saved and restored between sessions.
+- **Multi-LLM Configuration**: Switch between OpenAI, Ollama, and local models on the fly.
+- **Audio Synchronization**: Prevents audio overlap with proper chunk sequencing.
+- **Camera Optimization**: DirectShow settings for Windows webcams with exposure control.
 
 ## Prerequisites
 
@@ -180,12 +214,60 @@ If the robot daemon is on a different machine or port, update the `host` paramet
 
 ## Voice Assistant
 
-- **Stack**: STT (Faster-Whisper), LLM (Gemma 3 4B preferred with fallbacks), TTS (Piper).
+- **Stack**: STT (Faster-Whisper), LLM (OpenAI/Ollama/Local), TTS (Piper).
 - **Caching**: Whisper uses local `download_root`; LLM uses local `cache_dir`; Piper reads voices from `models/piper`.
-- **Enable**: In the dashboard, click “🎤 Voice: Off” to start listening.
+- **Enable**: In the dashboard, click "🎤 Voice: Off" to start listening.
 - **Flow**: Listens → transcribes → generates → speaks (if a Piper voice is present).
 - **Status**: `/api/voice/status` returns voice state, `models` info, and any `error`.
 - **Commands**: POST `/api/voice/text_command` (optionally `speak: true`) or `/api/voice/speak`.
+
+### LLM Configuration
+
+The voice assistant supports three LLM providers with dynamic switching:
+
+#### OpenAI (Recommended for Best Quality)
+```json
+{
+  "provider": "openai",
+  "model": "gpt-5-nano",
+  "api_key": "sk-..."
+}
+```
+- Supports: GPT-3.5-turbo, GPT-4, GPT-5, o1, o3 models
+- Configure via `/api/llm/config` endpoint or dashboard settings
+- API key stored in `llm_config.json` (not committed to git)
+
+#### Ollama (Local Models via Ollama Server)
+```json
+{
+  "provider": "ollama",
+  "model": "llama2",
+  "endpoint": "http://localhost:11434"
+}
+```
+- Requires Ollama installed and running locally
+- Supports any Ollama-compatible model
+- No API key needed
+
+#### Local (Bundled with Project)
+```json
+{
+  "provider": "local",
+  "model": "google/gemma-2-2b-it"
+}
+```
+- Runs entirely offline using HuggingFace transformers
+- Automatic fallbacks: Gemma 2 2B → Phi-3 Mini → Qwen 2.5 0.5B
+- Memory-aware model selection based on available RAM
+- Requires Hugging Face login for gated models (Gemma)
+
+### Voice Features
+
+- **Conversation Memory**: Maintains last 8 messages for context
+- **Smart Text Processing**: Removes markdown, code blocks, and formatting
+- **Async Speech**: Text response returns immediately while TTS plays in background
+- **Volume Control**: Adjustable speaker volume (0-100%)
+- **Auto-Reset**: Robot returns to center position after speaking
 
 ### Volume Control
 - **UI sliders**: Voice panel and top bar include volume sliders (default 25%).
