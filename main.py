@@ -406,7 +406,12 @@ def video_stream_loop():
         # Only predict if we have a target AND we are not "blind" from a move?
         # Actually, let's keep predictions running but gating the CONTROL is what matters.
         
-        if current_target_id is not None and current_target_id in trackable_objects:
+        # Skip tracking if paused during speech
+        if robot._pause_tracking:
+            current_status = "Speaking... (Tracking Paused)"
+            detected = False
+            target_box = None
+        elif current_target_id is not None and current_target_id in trackable_objects:
              obj = trackable_objects[current_target_id]
              target_label = obj['data'][1]
              
@@ -861,10 +866,11 @@ async def text_command(data: dict):
         VOICE_STATE["conversation_history"].append({"role": "user", "content": text})
         VOICE_STATE["conversation_history"].append({"role": "assistant", "content": response})
         
-        # Optionally speak the response
+        # Speak asynchronously in background so response is returned immediately
         if data.get("speak", False):
-            logger.info("[VOICE] Speak requested: sending TTS to robot")
-            voice_assistant.speak_text(response)
+            logger.info("[VOICE] Speak requested: sending TTS to robot in background")
+            import threading
+            threading.Thread(target=lambda: voice_assistant.speak_text(response), daemon=True).start()
         
         return {"status": "ok", "response": response}
     except Exception as e:

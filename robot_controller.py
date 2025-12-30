@@ -62,8 +62,13 @@ class RobotController:
 
         # Audio volume (0.0 - 1.0). Default 25%.
         self.audio_volume = 0.5
-
-    def set_audio_volume(self, volume: float):
+        
+        # Audio playback synchronization
+        self._audio_playing = threading.Event()  # Signal when audio finishes
+        
+        # Tracking pause during speech
+        self._pause_tracking = False
+        self._saved_target_id = None
         """Set speaker volume (0.0 - 1.0)."""
         try:
             v = float(volume)
@@ -670,6 +675,7 @@ class RobotController:
 
     def play_sound_from_file(self, filepath: str):
         """Play audio from an absolute file path (used for TTS output)."""
+        self._audio_playing.clear()  # Mark as playing
         def safe_play():
             try:
                 self._play_audio_file(filepath)
@@ -677,6 +683,8 @@ class RobotController:
                 print(f"[AUDIO] Unhandled exception in playback thread: {type(e).__name__}: {e}")
                 import traceback
                 traceback.print_exc()
+            finally:
+                self._audio_playing.set()  # Signal that audio is done
         
         threading.Thread(target=safe_play, daemon=True).start()
 
@@ -734,15 +742,14 @@ class RobotController:
                     
                     direction *= -1
 
-                # Reset gently
+                # Reset gently - just clear offsets without forcing a pose change
+                # This allows tracking system to naturally resume control
                 self._speech_roll_offset = 0.0
                 self._speech_pitch_offset = 0.0
                 self._speech_antenna_left_offset = 0.0
                 self._speech_antenna_right_offset = 0.0
-                try:
-                    self.set_pose(antenna_left=0.0, antenna_right=0.0, duration=2.0)
-                except: 
-                    pass
+                # Let the next tracking update smoothly restore position
+                # No explicit set_pose call to avoid conflict with tracking system
 
             threading.Thread(target=motion_thread, daemon=True).start()
             
@@ -834,8 +841,6 @@ class RobotController:
                     else:
                         raise  # Re-raise on final attempt
             
-            self._is_speaking = False
-            
             # Delete temporary file
             if is_temp_file:
                 try:
@@ -848,7 +853,6 @@ class RobotController:
             print(f"[AUDIO] Error playing file: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
-            self._is_speaking = False
             if is_temp_file:
                 try:
                     os.remove(filepath)

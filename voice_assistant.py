@@ -843,84 +843,156 @@ Rules:
         letters = re.findall(r"[A-Za-z]", s)
         if len(letters) < max(5, len(s) // 10):
             return "Thanks! I’m here. What would you like me to do?"
-        # Trim overly long outputs
-        s = s[:240]
         return s.strip()
 
     def _speak(self, text: str):
-        """Synthesize and play speech using Piper TTS"""
+        """Synthesize and play speech using Piper TTS - splits long text into chunks"""
         try:
             import subprocess
             import tempfile
             import sounddevice as sd
             import soundfile as sf
+            import re
+            
             # Ensure Piper is configured even when called outside the main loop
             if self._piper_model is None or not self._piper_model_path:
                 try:
                     self._load_piper()
                 except Exception:
                     pass
+            
             # Clean and sanitize assistant text before TTS
             text = self._postprocess_response(self._extract_assistant_content(text))
             
-            # Create temporary WAV file
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                output_path = tmp.name
+            # Split long text into sentences to avoid single-file length issues
+            # Maximum ~500 characters per chunk (longer chunks are more efficient)
+            sentences = re.split(r'(?<=[.!?])\s+', text)
             
-            # Use piper CLI with local model path
-            if not self._piper_model_path:
-                logger.error("Piper TTS model not found in models/piper. Skipping TTS.")
-                return
-            cmd = [
-                "piper",
-                "--model", self._piper_model_path,
-                "--output_file", output_path
-            ]
+            chunks = []
+            current_chunk = ""
+            chunk_max_len = 500  # Increased from 200 for more efficiency
             
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
+            for sentence in sentences:
+                if not sentence.strip():
+                    continue
+                
+                # Calculate what the chunk would be if we add this sentence
+                test_chunk = current_chunk + (" " if current_chunk else "") + sentence
+                
+                # If it fits, add it to current chunk
+                if len(test_chunk) <= chunk_max_len:
+                    current_chunk = test_chunk
+                else:
+                    # If current chunk has content, save it and start new one
+                    if current_chunk.strip():
+                        chunks.append(current_chunk.strip())
+                    current_chunk = sentence
             
-            stdout, stderr = proc.communicate(input=text)
+            # Add remaining chunk
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
             
-            if proc.returncode != 0:
-                logger.error(f"Piper TTS error: {stderr}")
-                return
+            # If no chunks were created, just use original text
+            if not chunks:
+                chunks = [text]
             
-            # Ensure file is written and flushed to disk before playback
-            # Wait up to 2 seconds for the file to exist and be readable
-            import os
-            file_ready = False
-            for attempt in range(20):  # 20 * 0.1s = 2 seconds max
-                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                    file_ready = True
-                    break
-                time.sleep(0.1)
+            logger.info(f"[TTS] Split text into {len(chunks)} chunks for playback")
             
-            if not file_ready:
-                logger.error(f"TTS audio file not created or empty: {output_path}")
-                return
-            
-            # Play audio through robot speakers (async to avoid blocking)
+            # Set speaking flag ONCE at the start of all chunks
             if self.robot:
-                # Use threading to prevent blocking the voice processing loop
-                playback_thread = threading.Thread(
-                    target=lambda: self.robot.play_sound_from_file(output_path),
-                    daemon=True
-                )
-                playback_thread.start()
-                logger.info(f"TTS playback started: {text[:50]}...")
-            else:
-                logger.warning("Robot controller not available for audio playback")
+                self.robot._is_speaking = True
+                # Pause tracking during speech to prevent fighting with speech motion
+                self.robot._pause_tracking = True
             
-            # Note: Don't delete file immediately, let playback thread finish
-            # The temp file will be cleaned up eventually by the OS
+            # Generate and play each chunk sequentially
+            for chunk_idx, chunk in enumerate(chunks):
+                if not chunk.strip():
+                    continue
+                
+                logger.info(f"[TTS] Processing chunk {chunk_idx + 1}/{len(chunks)}: {chunk[:50]}...")
+                
+                # Create temporary WAV file
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    output_path = tmp.name
+                
+                # Use piper CLI with local model path
+                if not self._piper_model_path:
+                    logger.error("Piper TTS model not found in models/piper. Skipping TTS.")
+                    if self.robot:
+                        self.robot._is_speaking = False
+                    return
+                
+                cmd = [
+                    "piper",
+                    "--model", self._piper_model_path,
+                    "--output_file", output_path
+                ]
+                
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                
+                stdout, stderr = proc.communicate(input=chunk)
+                
+                if proc.returncode != 0:
+                    logger.error(f"Piper TTS error for chunk {chunk_idx}: {stderr}")
+                    continue
+                
+                # Ensure file is written and flushed to disk before playback
+                # Wait up to 2 seconds for the file to exist and be readable
+                import os
+                file_ready = False
+                for attempt in range(20):  # 20 * 0.1s = 2 seconds max
+                    if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                        file_ready = True
+                        break
+                    time.sleep(0.1)
+                
+                if not file_ready:
+                    logger.error(f"TTS audio file not created or empty: {output_path}")
+                    continue
+                
+                # Play audio through robot speakers (async to avoid blocking)
+                if self.robot:
+                    # Wait for audio to finish before playing next chunk
+                    logger.info(f"[TTS] Playing chunk {chunk_idx + 1}/{len(chunks)}")
+                    try:
+                        self.robot.play_sound_from_file(output_path)
+                        # Wait for this chunk to finish before playing next one
+                        self.robot._audio_playing.wait(timeout=60)  # 60 second timeout per chunk
+                        # Don't delete file here - robot controller will handle it in background thread
+                    except Exception as e:
+                        logger.error(f"Error playing audio chunk {chunk_idx}: {e}")
+                        # Clean up on error only
+                        try:
+                            if os.path.exists(output_path):
+                                os.remove(output_path)
+                        except Exception:
+                            pass
+                else:
+                    logger.warning("Robot controller not available for audio playback")
+                    # Clean up if no robot
+                    try:
+                        if os.path.exists(output_path):
+                            os.remove(output_path)
+                    except Exception:
+                        pass
+            
+            # Set speaking flag to False ONLY after all chunks are done
+            if self.robot:
+                self.robot._is_speaking = False
+                # Resume tracking after speech
+                self.robot._pause_tracking = False
+                # Reset to default position after speaking
+                self.robot.recenter_head()
+            
+            logger.info(f"[TTS] All {len(chunks)} chunks played successfully")
         
         except FileNotFoundError:
             logger.error("Piper CLI not found. Install piper or ensure it's in PATH.")
