@@ -55,8 +55,9 @@ async def log_requests_middleware(request, call_next):
     
     response = await call_next(request)
     
-    # Skip logging for /status and /api/voice/level unless verbose logging is enabled
-    if (request.url.path == "/status" or request.url.path == "/api/voice/level") and not VERBOSE_LOGGING:
+    # Skip logging for polling endpoints unless verbose logging is enabled
+    quiet_endpoints = ["/status", "/api/voice/level", "/api/voice/status", "/api/voice/transcript"]
+    if request.url.path in quiet_endpoints and not VERBOSE_LOGGING:
         return response
     
     # Log other requests (or telemetry endpoints when verbose)
@@ -382,45 +383,47 @@ def video_stream_loop():
             LATEST_CANDIDATES = current_frame_candidates
             
             # --- EXPLICIT SWITCHING LOGIC ---
-            # Requirement: New Score > Current Score + 50 (unless current is lost)
-            
-            # 1. Check Threshold for Best Candidate
-            if best_score < TUNING["min_score_threshold"]:
-                 best_id = None
-            
-            # 2. Apply Hysteresis
-            if current_target_id is not None and current_target_id in trackable_objects:
-                # Find current target's score (Captured in loop above)
-                if current_target_score > 0:
-                     # If best_id is DIFFERENT from current, check the delta.
-                     if best_id is not None and best_id != current_target_id:
-                         if best_score <= (current_target_score + 50.0):
-                             # Challenger is not strong enough. Hold current.
-                             # print(f"Holding ID {current_target_id} (S:{current_target_score:.0f}). Challenger ID {best_id} (S:{best_score:.0f}) didn't exceed by 50.")
-                             best_id = current_target_id 
+            # Skip target switching if tracking is paused (e.g., during speech)
+            if not robot._pause_tracking:
+                # Requirement: New Score > Current Score + 50 (unless current is lost)
                 
-             # --- END HYSTERESIS ---
-            
-            # Switch Target logic...
-            if best_id is not None:
-                if best_id != current_target_id:
-                     logger.info(f"SWITCH TARGET: {current_target_id} -> {best_id} | Candidates: {', '.join(debug_candidates)}")
-                     current_target_id = best_id
-                     tgt_box = trackable_objects[best_id]['data'][0]
-                     visual_tracker = _create_tracker()
-                     if visual_tracker:
-                         visual_tracker.init(frame, tuple(tgt_box))
+                # 1. Check Threshold for Best Candidate
+                if best_score < TUNING["min_score_threshold"]:
+                     best_id = None
+                
+                # 2. Apply Hysteresis
+                if current_target_id is not None and current_target_id in trackable_objects:
+                    # Find current target's score (Captured in loop above)
+                    if current_target_score > 0:
+                         # If best_id is DIFFERENT from current, check the delta.
+                         if best_id is not None and best_id != current_target_id:
+                             if best_score <= (current_target_score + 50.0):
+                                 # Challenger is not strong enough. Hold current.
+                                 # print(f"Holding ID {current_target_id} (S:{current_target_score:.0f}). Challenger ID {best_id} (S:{best_score:.0f}) didn't exceed by 50.")
+                                 best_id = current_target_id 
+                    
+                 # --- END HYSTERESIS ---
+                
+                # Switch Target logic...
+                if best_id is not None:
+                    if best_id != current_target_id:
+                         logger.info(f"SWITCH TARGET: {current_target_id} -> {best_id} | Candidates: {', '.join(debug_candidates)}")
+                         current_target_id = best_id
+                         tgt_box = trackable_objects[best_id]['data'][0]
+                         visual_tracker = _create_tracker()
+                         if visual_tracker:
+                             visual_tracker.init(frame, tuple(tgt_box))
+                    else:
+                        # SAME TARGET: Force Re-Sync to DNN box to correct drift
+                        # Only do this if we are not currently blind/moving
+                        if current_time > last_move_end_time:
+                            tgt_box = trackable_objects[best_id]['data'][0]
+                            visual_tracker = _create_tracker()
+                            if visual_tracker:
+                                visual_tracker.init(frame, tuple(tgt_box))
                 else:
-                    # SAME TARGET: Force Re-Sync to DNN box to correct drift
-                    # Only do this if we are not currently blind/moving
-                    if current_time > last_move_end_time:
-                        tgt_box = trackable_objects[best_id]['data'][0]
-                        visual_tracker = _create_tracker()
-                        if visual_tracker:
-                            visual_tracker.init(frame, tuple(tgt_box))
-            else:
-                current_target_id = None
-                visual_tracker = None
+                    current_target_id = None
+                    visual_tracker = None
 
         # 4. Visual Tracking (Inter-frame)
         # We allow visual tracking to continue even if we are waiting for fresh DNN?
@@ -967,6 +970,30 @@ async def text_command(data: dict):
         logger.error(f"Text command error: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
 
+@app.post("/api/voice/listen_now")
+async def listen_now():
+    """Manual trigger: Start listening for a voice command RIGHT NOW
+    
+    This will:
+    1. Play 'excited' emotion to indicate listening started
+    2. Capture speech for up to 10 seconds
+    3. Transcribe and respond
+    4. Return to idle
+    """
+    global voice_assistant
+    
+    try:
+        if voice_assistant is None or not voice_assistant.running:
+            return {"status": "error", "message": "Voice assistant not running"}
+        
+        # Trigger manual listening mode
+        voice_assistant.manual_listen_trigger()
+        
+        return {"status": "ok", "message": "Listening started - speak now!"}
+    except Exception as e:
+        logger.error(f"Manual listen trigger error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
 @app.post("/api/voice/speak")
 async def speak_text(data: dict):
     """Speak text directly via TTS"""
@@ -985,6 +1012,21 @@ async def speak_text(data: dict):
     except Exception as e:
         logger.error(f"TTS error: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/voice/stop")
+async def stop_speech():
+    """Stop currently playing speech"""
+    global voice_assistant
+    try:
+        if voice_assistant:
+            voice_assistant.stop_speech()
+            return {"status": "ok"}
+        return {"status": "error", "message": "Voice assistant not initialized"}
+    except Exception as e:
+        logger.error(f"Stop speech error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
 
 @app.post("/api/voice/wake-word/configure")
 async def configure_wake_word(data: dict):
@@ -1094,6 +1136,39 @@ async def get_voice_level():
     except Exception as e:
         logger.error(f"Voice level error: {e}", exc_info=True)
         return {"rms": 0.0, "db": -120.0}
+
+
+@app.post("/api/voice/debug")
+async def set_debug_mode(request_data: dict):
+    """Enable/disable debug audio logging"""
+    global voice_assistant
+    try:
+        enabled = request_data.get("enabled", False)
+        if voice_assistant:
+            voice_assistant.debug_audio_enabled = enabled
+            logger.info(f"Debug audio logging: {'ENABLED' if enabled else 'DISABLED'}")
+            return {"status": "ok", "debug_enabled": enabled}
+        return {"status": "error", "message": "Voice assistant not initialized"}
+    except Exception as e:
+        logger.error(f"Debug mode error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/voice/transcript")
+async def get_latest_transcript():
+    """Get the latest transcribed text from speech input"""
+    global VOICE_STATE
+    try:
+        text = VOICE_STATE.get("last_transcript", "")
+        if text:
+            # Return and clear so it's only shown once
+            last = text
+            VOICE_STATE["last_transcript"] = ""
+            return {"text": last, "has_new": True}
+        return {"text": "", "has_new": False}
+    except Exception as e:
+        logger.error(f"Transcript fetch error: {e}", exc_info=True)
+        return {"text": "", "has_new": False}
 
 
 # ══════════════════════════════════════

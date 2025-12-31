@@ -195,6 +195,17 @@
 
                     <!-- Voice controls should stay usable even when manual control is off -->
                     <div class="voice-controls">
+                        <div class="control-group" style="margin-bottom:16px;">
+                            <button id="push-to-talk-btn" style="width:100%; padding:24px; font-size:18px; font-weight:bold; background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); color:#fff; border:none; border-radius:12px; cursor:pointer; box-shadow:0 4px 12px rgba(102,126,234,0.3); transition:all 0.2s; text-shadow:0 1px 2px rgba(0,0,0,0.2);">
+                                🎤 Hold to Talk
+                            </button>
+                            <div id="ptt-status" style="text-align:center; margin-top:8px; font-size:13px; color:var(--text-muted); min-height:20px;"></div>
+                        </div>
+                        <div class="control-group" style="margin-bottom:16px;">
+                            <button id="stop-speech-btn" style="width:100%; padding:16px; font-size:16px; font-weight:bold; background:linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color:#fff; border:none; border-radius:12px; cursor:pointer; box-shadow:0 4px 12px rgba(239,68,68,0.3); transition:all 0.2s;">
+                                🛑 Stop Speech
+                            </button>
+                        </div>
                         <div class="control-group">
                             <h4>Voice Volume</h4>
                             <div class="slider-row">
@@ -424,6 +435,17 @@
                         <strong>Status:</strong> <span id="wake-word-status-text">Initializing...</span>
                     </div>
                 </div>
+
+                <div class="settings-group">
+                    <h3>Debug Mode</h3>
+                    <div class="settings-row">
+                        <label style="display:flex; align-items:center; gap:8px;">
+                            <input type="checkbox" id="debug-audio-enabled" style="margin-right:0;">
+                            Enable Audio Debug Logging
+                        </label>
+                        <p class="info-text" style="font-size:11px; margin-top:4px;">Saves debug_audio_raw.wav and debug_audio_amplified.wav for troubleshooting.</p>
+                    </div>
+                </div>
             </div>
 
             <!-- Tuning Settings Tab -->
@@ -576,6 +598,52 @@
 
         $('chat-input').onkeypress = e => { if (e.key === 'Enter') $('chat-send').click(); };
 
+        // Poll for transcriptions and display in chat
+        const transcriptionPoller = setInterval(async () => {
+            try {
+                const res = await fetch('/api/voice/transcript');
+                const data = await res.json();
+                if (data.has_new && data.text) {
+                    addMsg('user', `🎙️ You: ${data.text}`);
+                }
+            } catch (e) {
+                // Silently fail
+            }
+        }, 500);
+
+        // Debug audio logging checkbox
+        const debugCheckbox = $('debug-audio-enabled');
+        if (debugCheckbox) {
+            // Load saved state
+            const savedDebug = localStorage.getItem('debug_audio_enabled') === 'true';
+            debugCheckbox.checked = savedDebug;
+            
+            // Save on change
+            debugCheckbox.addEventListener('change', async (e) => {
+                const enabled = e.target.checked;
+                localStorage.setItem('debug_audio_enabled', enabled ? 'true' : 'false');
+                try {
+                    await fetch('/api/voice/debug', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled })
+                    });
+                    vlog('[DEBUG]', enabled ? 'Audio debug enabled' : 'Audio debug disabled');
+                } catch (err) {
+                    logger.error('Error setting debug mode:', err);
+                }
+            });
+            
+            // Apply saved state on load
+            if (savedDebug) {
+                fetch('/api/voice/debug', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: true })
+                }).catch(() => {});
+            }
+        }
+
         // ══════════════════════════════════════
         // ACTIONS
         // ══════════════════════════════════════
@@ -633,6 +701,64 @@
             const data = await res.json();
             voiceEnabled = data.voice_enabled;
             $('voice-btn').classList.toggle('active', voiceEnabled);
+        };
+
+        // ══════════════════════════════════════
+        // PUSH-TO-TALK BUTTON
+        // ══════════════════════════════════════
+        const pttBtn = $('push-to-talk-btn');
+        const pttStatus = $('ptt-status');
+        let pttActive = false;
+
+        pttBtn.onmousedown = pttBtn.ontouchstart = async (e) => {
+            e.preventDefault();
+            if (pttActive) return; // Prevent multiple triggers
+            pttActive = true;
+            
+            // Visual feedback
+            pttBtn.style.background = 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)';
+            pttBtn.style.transform = 'scale(0.95)';
+            pttBtn.innerHTML = '🔴 RECORDING...';
+            pttStatus.textContent = '🎙️ Speak now!';
+            pttStatus.style.color = '#ef4444';
+            
+            // Trigger listening
+            try {
+                const res = await fetch('/api/voice/listen_now', { method: 'POST' });
+                const data = await res.json();
+                if (data.status !== 'ok') {
+                    pttStatus.textContent = '⚠️ ' + data.message;
+                    resetPTT();
+                }
+            } catch (err) {
+                pttStatus.textContent = '❌ Failed to start listening';
+                resetPTT();
+            }
+        };
+
+        pttBtn.onmouseup = pttBtn.onmouseleave = pttBtn.ontouchend = (e) => {
+            if (!pttActive) return;
+            e.preventDefault();
+            pttStatus.textContent = '⏳ Processing...';
+            setTimeout(resetPTT, 2000); // Reset after 2s
+        };
+
+        function resetPTT() {
+            pttActive = false;
+            pttBtn.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+            pttBtn.style.transform = 'scale(1)';
+            pttBtn.innerHTML = '🎤 Hold to Talk';
+            pttStatus.textContent = '';
+        }
+
+        // Stop speech button
+        $('stop-speech-btn').onclick = async () => {
+            try {
+                await fetch('/api/voice/stop', { method: 'POST' });
+                vlog('[VOICE] Speech stopped');
+            } catch (e) {
+                console.error('Failed to stop speech:', e);
+            }
         };
 
         $('restart-btn').onclick = async () => {

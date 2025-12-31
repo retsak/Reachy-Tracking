@@ -9,8 +9,83 @@ import soundfile as sf
 import scipy.signal
 import os
 import tempfile
+import logging
 from reachy_mini import ReachyMini as SDKReachyMini
 from reachy_sdk_shim import ReachyMini, create_head_pose
+
+logger = logging.getLogger(__name__)
+
+
+class MicrophoneContextManager:
+    """Wrapper to provide persistent microphone access via Reachy SDK."""
+    
+    def __init__(self, host='localhost'):
+        self.host = host
+        self._sdk_instance = None
+        self._recording = False
+        self._lock = threading.Lock()
+    
+    @property
+    def media(self):
+        """Provide media property for backward compatibility."""
+        return self
+    
+    def start_recording(self):
+        """Start recording audio via SDK."""
+        with self._lock:
+            if not self._recording:
+                try:
+                    if self._sdk_instance is None:
+                        logger.info("Creating SDK connection for microphone...")
+                        self._sdk_instance = SDKReachyMini(log_level="ERROR", media_backend="default", timeout=15)
+                        self._sdk_instance.__enter__()
+                        logger.info("✓ SDK connection established")
+                    
+                    self._sdk_instance.media.start_recording()
+                    self._recording = True
+                    logger.info("✓ Microphone recording started")
+                except Exception as e:
+                    logger.error(f"Failed to start recording: {e}")
+                    self._sdk_instance = None
+                    self._recording = False
+    
+    def get_audio_sample(self):
+        """Get next audio chunk from SDK."""
+        if self._sdk_instance is None or not self._recording:
+            return None
+        try:
+            sample = self._sdk_instance.media.get_audio_sample()
+            return sample
+        except Exception as e:
+            logger.error(f"Error getting audio sample: {e}")
+            return None
+    
+    def stop_recording(self):
+        """Stop recording audio."""
+        with self._lock:
+            if self._sdk_instance is not None and self._recording:
+                try:
+                    self._sdk_instance.media.stop_recording()
+                    self._recording = False
+                    logger.info("Microphone recording stopped")
+                except Exception as e:
+                    logger.warning(f"Error stopping recording: {e}")
+    
+    def close(self):
+        """Close SDK connection."""
+        with self._lock:
+            if self._sdk_instance is not None:
+                try:
+                    if self._recording:
+                        self._sdk_instance.media.stop_recording()
+                except:
+                    pass
+                try:
+                    self._sdk_instance.__exit__(None, None, None)
+                except:
+                    pass
+                self._sdk_instance = None
+
 
 class RobotController:
     def __init__(self, host='localhost'):
@@ -69,6 +144,17 @@ class RobotController:
         # Tracking pause during speech
         self._pause_tracking = False
         self._saved_target_id = None
+        
+        # Initialize SDK instance for microphone access
+        self._initialize_sdk_mini()
+
+    def _initialize_sdk_mini(self):
+        """Initialize SDK Rechy Mini instance for microphone and audio access."""
+        if self.sdk_mini is None:
+            self.sdk_mini = MicrophoneContextManager(self.host)
+            logger.info("Microphone context manager initialized")
+
+    def set_volume(self, volume):
         """Set speaker volume (0.0 - 1.0)."""
         try:
             v = float(volume)

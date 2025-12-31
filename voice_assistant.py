@@ -10,6 +10,7 @@ import logging
 import re
 import numpy as np
 import soundfile as sf
+import sounddevice as sd
 from typing import Optional, Callable
 from pathlib import Path
 from llm_config import get_llm_config_manager
@@ -75,6 +76,14 @@ class VoiceAssistant:
         self.wake_word_timeout = 5.0  # Seconds to listen after wake word detected
         self._wake_word_detected_time = None
         self._wake_word_buffer_size = 1280  # 80ms at 16kHz for wake word detection
+        self._manual_listen_requested = False  # Flag for manual listening trigger
+        
+        # Debug mode
+        self.debug_audio_enabled = False  # Save debug audio files
+        
+        # TTS lock to prevent overlapping speech
+        self._tts_lock = threading.Lock()
+        self._stop_speech_requested = False  # Flag to interrupt ongoing speech
         
         # Conversation context
         self.conversation_history = []
@@ -96,6 +105,11 @@ Rules:
         # Threading
         self._listen_thread = None
         self._process_thread = None
+        
+        # PC microphone mode (fallback when SDK doesn't work)
+        self._use_pc_microphone = False
+        self._pc_audio_queue = queue.Queue()
+        self._pc_stream = None
         
         logger.info("VoiceAssistant initialized")
 
@@ -129,7 +143,11 @@ Rules:
             try:
                 from faster_whisper import WhisperModel
                 logger.info("Loading Whisper model (base)...")
-                # Use base model for balance of speed and accuracy, cache locally
+                # Use base model for reliable speech recognition
+                # Suppress tqdm to avoid _lock attribute error on Windows
+                import os
+                os.environ['HF_HUB_DISABLE_PROGRESS_BARS'] = '1'
+                
                 self._whisper_model = WhisperModel(
                     "base", device="cpu", compute_type="int8", download_root=str(self.whisper_dir)
                 )
@@ -137,7 +155,20 @@ Rules:
                 self.model_info["whisper"] = {"name": "base", "dir": str(self.whisper_dir)}
             except Exception as e:
                 logger.error(f"Failed to load Whisper: {e}", exc_info=True)
-                raise
+                # Check if model exists despite error (tqdm issue on Windows)
+                model_path = self.whisper_dir / "models--Systran--faster-whisper-base"
+                if model_path.exists():
+                    logger.info("Whisper model files exist, retrying without download...")
+                    try:
+                        # Try loading from local cache
+                        self._whisper_model = WhisperModel(
+                            str(model_path / "snapshots"), device="cpu", compute_type="int8"
+                        )
+                        logger.info("✓ Whisper model loaded from cache")
+                    except:
+                        raise
+                else:
+                    raise
         return self._whisper_model
     
     def _load_llm(self):
@@ -330,16 +361,38 @@ Rules:
                 # Download models if not already present
                 try:
                     oww_utils.download_models()
+                    logger.info("✓ Wake word models downloaded/verified")
                 except Exception as e:
                     logger.warning(f"Failed to download wake word models (may already exist): {e}")
                 
+                # First, try loading ALL models to see what's available
+                logger.info("Loading all available wake word models to check availability...")
+                try:
+                    test_model = WakeWordModel(inference_framework='onnx')
+                    available_models = list(test_model.models.keys())
+                    logger.info(f"📋 Available wake word models: {available_models}")
+                    del test_model
+                except Exception as e:
+                    logger.warning(f"Could not list available models: {e}")
+                    available_models = []
+                
                 # Load the specified wake word model
+                logger.info(f"Attempting to load specific model: '{self.wake_word}'")
                 self._wake_word_model = WakeWordModel(
                     wakeword_models=[self.wake_word],
                     inference_framework='onnx'
                 )
                 
-                logger.info(f"Wake word model loaded: {list(self._wake_word_model.models.keys())}")
+                # Log loaded models and verify the wake word exists
+                loaded_models = list(self._wake_word_model.models.keys())
+                logger.info(f"✓ Wake word model loaded: {loaded_models}")
+                
+                if self.wake_word not in loaded_models:
+                    logger.error(f"❌ Requested wake word '{self.wake_word}' not found in loaded models: {loaded_models}")
+                    logger.info(f"Available models: {loaded_models}")
+                    logger.info("Try using one of these instead: 'alexa', 'hey_mycroft', 'hey_rhasspy'")
+                    self.wake_word_enabled = False
+                    return None
                 self.model_info["wake_word"] = {
                     "model": self.wake_word,
                     "threshold": self.wake_word_threshold,
@@ -395,7 +448,37 @@ Rules:
         """Stop the voice assistant"""
         self.running = False
         self.listening = False
+        if self._pc_stream:
+            try:
+                self._pc_stream.stop()
+                self._pc_stream.close()
+            except:
+                pass
         logger.info("Voice assistant stopped")
+    
+    def _start_pc_microphone(self):
+        """Start PC microphone using sounddevice as fallback."""
+        def audio_callback(indata, frames, time_info, status):
+            if status:
+                logger.warning(f"PC mic status: {status}")
+            # Convert to mono float32
+            audio = indata[:, 0] if indata.ndim > 1 else indata
+            self._pc_audio_queue.put(audio.copy())
+        
+        try:
+            logger.info("🎤 Starting PC microphone (sounddevice fallback)...")
+            self._pc_stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype='float32',
+                blocksize=self.chunk_size,
+                callback=audio_callback
+            )
+            self._pc_stream.start()
+            logger.info("✅ PC microphone active")
+        except Exception as e:
+            logger.error(f"Failed to start PC microphone: {e}")
+            self._use_pc_microphone = False
     
     def _listen_loop(self):
         """Main listening loop - captures audio from microphone with optional wake word detection"""
@@ -405,8 +488,13 @@ Rules:
                 self.running = False
                 return
             
+            if self.robot.sdk_mini is None:
+                logger.error("SDK microphone manager is None - cannot start recording")
+                self.running = False
+                return
+            
             logger.info("Starting microphone capture (Reachy built-in mic)...")
-            mini = self.robot.sdk_mini  # Reuse robot's MediaManager
+            mini = self.robot.sdk_mini  # Get the microphone manager
             
             # Load wake word model if enabled
             wake_word_model = None
@@ -424,8 +512,13 @@ Rules:
                 logger.info("Wake word detection disabled - listening for all speech")
             
             try:
-                mini.media.start_recording()
-                logger.info("Microphone recording active (Reachy robot)")
+                logger.info("Attempting to start microphone recording...")
+                mini.start_recording()
+                logger.info("✓ Microphone recording active (Reachy robot)")
+                
+                # Test for silence - if SDK returns zeros, switch to PC microphone
+                silence_test_chunks = 0
+                max_test_chunks = 50  # Test first ~1.5 seconds
                 
                 vad_buffer = []
                 wake_word_buffer = []
@@ -436,12 +529,35 @@ Rules:
                 
                 while self.running:
                     try:
+                        # Check for manual listen trigger
+                        if self._manual_listen_requested:
+                            logger.info("💬 Manual listening mode activated - speak now!")
+                            listening_for_command = True
+                            self._wake_word_detected_time = time.time()
+                            vad_buffer = []
+                            speech_detected = False
+                            self._manual_listen_requested = False  # Reset flag
+                        
                         # Get audio chunk from microphone
-                        chunk = mini.media.get_audio_sample()
+                        chunk = mini.get_audio_sample()
                         
                         if chunk is None or len(chunk) == 0:
                             time.sleep(0.01)
                             continue
+                        
+                        # Convert stereo to mono if needed (wake word model requires mono)
+                        if chunk.ndim > 1:
+                            chunk = np.mean(chunk, axis=1).astype(chunk.dtype)
+                        
+                        # Test for silence during initial startup
+                        if silence_test_chunks < max_test_chunks:
+                            silence_test_chunks += 1
+                            if np.abs(chunk).max() < 0.001:  # Essentially silent
+                                if silence_test_chunks >= max_test_chunks:
+                                    logger.warning("⚠️ Reachy API microphone not accessible - switching to PC microphone")
+                                    self._use_pc_microphone = True
+                                    self._start_pc_microphone()
+                                    break  # Exit SDK loop and restart with PC mic
 
                         # Compute audio level telemetry (normalized RMS and dB)
                         try:
@@ -449,6 +565,13 @@ Rules:
                             norm = min(1.0, amplitude / 0.1)  # heuristic scale
                             self.last_rms = norm
                             self.last_db = 20 * np.log10(amplitude + 1e-6)
+                            
+                            # Debug: Log audio levels periodically (every 100 chunks)
+                            if not hasattr(self, '_audio_chunk_count'):
+                                self._audio_chunk_count = 0
+                            self._audio_chunk_count += 1
+                            if self._audio_chunk_count % 100 == 0:
+                                logger.info(f"🎧 Audio level: RMS={self.last_rms:.3f}, dB={self.last_db:.1f}, samples={len(chunk)}")
                         except Exception:
                             self.last_rms = 0.0
                             self.last_db = -120.0
@@ -457,21 +580,79 @@ Rules:
                         if wake_word_model and not listening_for_command:
                             # Accumulate audio for wake word detection (needs 80ms chunks = 1280 samples at 16kHz)
                             wake_word_buffer.append(chunk)
-                            wake_word_audio = np.concatenate(wake_word_buffer)
+                            
+                            # Debug: Log buffer state periodically
+                            if not hasattr(self, '_ww_buf_debug'):
+                                self._ww_buf_debug = 0
+                            self._ww_buf_debug += 1
+                            if self._ww_buf_debug % 30 == 0:
+                                buf_size = sum(len(c) if hasattr(c, '__len__') else 0 for c in wake_word_buffer)
+                                logger.info(f"🎯 Wake word buffer: {len(wake_word_buffer)} chunks, total_samples={buf_size}, chunk_shape={chunk.shape if hasattr(chunk, 'shape') else 'N/A'}, chunk_range=[{chunk.min() if hasattr(chunk, 'min') else 'N/A'}, {chunk.max() if hasattr(chunk, 'max') else 'N/A'}]")
+                            
+                            try:
+                                wake_word_audio = np.concatenate(wake_word_buffer)
+                            except Exception as e:
+                                logger.error(f"Error concatenating wake word buffer: {e}")
+                                wake_word_buffer = []
+                                continue
                             
                             # Process in 80ms chunks
                             if len(wake_word_audio) >= self._wake_word_buffer_size:
                                 # Take exactly 1280 samples for prediction
-                                detection_chunk = wake_word_audio[:self._wake_word_buffer_size].astype(np.int16)
-                                wake_word_buffer = [wake_word_audio[self._wake_word_buffer_size:]]
+                                detection_chunk = wake_word_audio[:self._wake_word_buffer_size].copy()
+                                
+                                # Debug: Log audio chunk info
+                                if not hasattr(self, '_ww_chunk_count'):
+                                    self._ww_chunk_count = 0
+                                self._ww_chunk_count += 1
+                                if self._ww_chunk_count % 20 == 0:
+                                    logger.info(f"📝 Detection chunk: dtype={detection_chunk.dtype}, min={float(np.min(detection_chunk)):.4f}, max={float(np.max(detection_chunk)):.4f}, samples={len(detection_chunk)}")
+                                
+                                # OpenWakeWord expects int16 PCM audio [-32768, 32767]
+                                if detection_chunk.dtype not in [np.int16]:
+                                    if detection_chunk.dtype in [np.float32, np.float64]:
+                                        # Audio is in [-1, 1] range, convert to int16
+                                        # Clip to [-1, 1] range first, then scale
+                                        detection_chunk = np.clip(detection_chunk, -1.0, 1.0)
+                                        # Scale: -1.0 → -32768, 1.0 → 32767
+                                        detection_chunk = (detection_chunk * 32767).astype(np.int16)
+                                    else:
+                                        detection_chunk = detection_chunk.astype(np.int16)
+                                
+                                # Keep remainder for next iteration
+                                remainder = wake_word_audio[self._wake_word_buffer_size:]
+                                if len(remainder) > 0:
+                                    wake_word_buffer = [remainder]
+                                else:
+                                    wake_word_buffer = []
                                 
                                 # Run wake word detection
                                 try:
                                     prediction = wake_word_model.predict(detection_chunk)
+                                    
+                                    # Debug: Log full prediction response
+                                    if not hasattr(self, '_ww_pred_count'):
+                                        self._ww_pred_count = 0
+                                    self._ww_pred_count += 1
+                                    if self._ww_pred_count % 20 == 0:
+                                        logger.info(f"🔮 Full prediction response: {prediction}")
+                                    
                                     score = prediction.get(self.wake_word, 0.0)
                                     
-                                    if score > self.wake_word_threshold:
-                                        logger.info(f"🎤 Wake word detected! (score: {score:.3f})")
+                                    # Initialize and increment counter for logging
+                                    if not hasattr(self, '_ww_check_count'):
+                                        self._ww_check_count = 0
+                                    self._ww_check_count += 1
+                                    
+                                    # Log scores more frequently to help tune threshold
+                                    if self._ww_check_count % 5 == 0 or score > 0.002:  # Log when score is elevated
+                                        logger.info(f"🔍 Wake word '{self.wake_word}' score: {score:.6f}")
+                                    
+                                    # Lowered threshold for testing - user reports not triggering
+                                    effective_threshold = 0.004
+                                    if score > effective_threshold:
+                                        logger.info(f"🎤✨ WAKE WORD DETECTED! (score: {score:.6f}, threshold: {effective_threshold})")
+                                        logger.info("💬 Listening for your command... (speak now)")
                                         listening_for_command = True
                                         self._wake_word_detected_time = time.time()
                                         vad_buffer = []  # Clear buffer to start fresh
@@ -484,8 +665,10 @@ Rules:
                                                 args=("excited",),
                                                 daemon=True
                                             ).start()
+                                except TypeError as te:
+                                    logger.error(f"❌ Wake word model prediction failed (TypeError): {te}. Prediction object type: {type(prediction)}")
                                 except Exception as e:
-                                    logger.error(f"Wake word prediction error: {e}")
+                                    logger.error(f"❌ Wake word prediction error: {e}")
                             
                             # Skip speech detection when waiting for wake word
                             continue
@@ -494,6 +677,20 @@ Rules:
                         if listening_for_command and self._wake_word_detected_time:
                             elapsed = time.time() - self._wake_word_detected_time
                             if elapsed > self.wake_word_timeout:
+                                if speech_detected and len(vad_buffer) > 0:
+                                    # Process whatever speech was captured before timeout
+                                    audio_data = np.concatenate(vad_buffer)
+                                    
+                                    # Check if we have enough actual speech (at least 0.5 seconds)
+                                    min_speech_samples = int(0.5 * self.sample_rate)
+                                    if len(audio_data) >= min_speech_samples:
+                                        self.text_queue.put(audio_data)
+                                        logger.info(f"Speech segment captured on timeout ({len(audio_data)} samples)")
+                                    else:
+                                        logger.info(f"⚠️ Speech too short ({len(audio_data)} samples < {min_speech_samples}), ignoring")
+                                else:
+                                    logger.info("⚠️ No speech detected during listening window")
+                                
                                 logger.info(f"⏱️ Wake word timeout ({self.wake_word_timeout}s) - returning to wake word detection")
                                 listening_for_command = False
                                 self._wake_word_detected_time = None
@@ -503,33 +700,10 @@ Rules:
                         
                         # Speech detection (only when listening for command)
                         if listening_for_command:
-                            # Simple energy-based VAD
-                            energy = np.sqrt(np.mean(chunk ** 2))
-                            is_speech = energy > 0.01  # Threshold for speech detection
-                            
-                            if is_speech:
-                                vad_buffer.append(chunk)
-                                speech_detected = True
-                                silence_chunks = 0
-                            elif speech_detected:
-                                vad_buffer.append(chunk)
-                                silence_chunks += 1
-                                
-                                # If enough silence after speech, process buffer
-                                if silence_chunks >= max_silence_chunks and len(vad_buffer) > 10:
-                                    audio_data = np.concatenate(vad_buffer)
-                                    self.text_queue.put(audio_data)
-                                    logger.info(f"Speech segment captured ({len(audio_data)} samples)")
-                                    
-                                    # Reset and return to wake word detection (if enabled)
-                                    vad_buffer = []
-                                    speech_detected = False
-                                    silence_chunks = 0
-                                    if wake_word_model:
-                                        listening_for_command = False
-                                        self._wake_word_detected_time = None
-                                        wake_word_buffer = []
-                                        logger.info("🔊 Listening for wake word...")
+                            # For MANUAL trigger (push-to-talk): capture ALL audio, no VAD filtering
+                            # User is actively holding button, so we know they're speaking
+                            vad_buffer.append(chunk)
+                            speech_detected = True
                     
                     except Exception as e:
                         logger.error(f"Audio capture error: {e}")
@@ -537,15 +711,136 @@ Rules:
                 
                 # Stop recording but don't close the MediaManager
                 try:
-                    mini.media.stop_recording()
+                    mini.stop_recording()
                     logger.info("Microphone recording stopped")
                 except Exception as e:
                     logger.warning(f"Error stopping recording: {e}")
             except Exception as e:
-                logger.error(f"Microphone setup error: {e}", exc_info=True)
+                logger.error(f"❌ Microphone setup error: {e}", exc_info=True)
+                self.running = False
+            
+            # If PC microphone mode was activated, continue with PC mic
+            if self._use_pc_microphone and self._pc_stream and self.running:
+                logger.info("🔄 Continuing with PC microphone...")
+                self._pc_microphone_loop(wake_word_model)
         
         except Exception as e:
-            logger.error(f"Listen loop error: {e}", exc_info=True)
+            logger.error(f"❌ Listen loop fatal error: {e}", exc_info=True)
+            self.running = False
+    
+    def _pc_microphone_loop(self, wake_word_model):
+        """PC microphone listening loop."""
+        try:
+            vad_buffer = []
+            wake_word_buffer = []
+            speech_detected = False
+            silence_chunks = 0
+            max_silence_chunks = 30
+            listening_for_command = not self.wake_word_enabled
+            
+            logger.info("🎧 PC microphone loop started")
+            
+            while self.running:
+                try:
+                    # Get audio from PC microphone queue
+                    try:
+                        chunk = self._pc_audio_queue.get(timeout=0.1)
+                    except queue.Empty:
+                        continue
+                    
+                    # Audio telemetry
+                    try:
+                        amplitude = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+                        self.last_rms = min(1.0, amplitude / 0.1)
+                        self.last_db = 20 * np.log10(amplitude + 1e-6)
+                    except:
+                        pass
+                    
+                    # Wake word detection
+                    if wake_word_model and not listening_for_command:
+                        wake_word_buffer.append(chunk)
+                        wake_word_audio = np.concatenate(wake_word_buffer)
+                        
+                        if len(wake_word_audio) >= self._wake_word_buffer_size:
+                            detection_chunk = wake_word_audio[:self._wake_word_buffer_size]
+                            
+                            # OpenWakeWord expects int16 PCM audio [-32768, 32767]
+                            if detection_chunk.dtype not in [np.int16]:
+                                if detection_chunk.dtype in [np.float32, np.float64]:
+                                    # Audio is in [-1, 1] range, convert to int16
+                                    detection_chunk = np.clip(detection_chunk, -1.0, 1.0)
+                                    detection_chunk = (detection_chunk * 32767).astype(np.int16)
+                                else:
+                                    detection_chunk = detection_chunk.astype(np.int16)
+                            
+                            wake_word_buffer = [wake_word_audio[self._wake_word_buffer_size:]]
+                            
+                            try:
+                                prediction = wake_word_model.predict(detection_chunk)
+                                score = prediction.get(self.wake_word, 0.0)
+                                
+                                # Lowered threshold for testing
+                                effective_threshold = 0.004
+                                if score > effective_threshold:
+                                    logger.info(f"🎤✨ WAKE WORD DETECTED! (score: {score:.6f}, threshold: {effective_threshold})")
+                                    listening_for_command = True
+                                    self._wake_word_detected_time = time.time()
+                                    vad_buffer = []
+                                    speech_detected = False
+                                    
+                                    if self.robot and hasattr(self.robot, 'trigger_emotion'):
+                                        threading.Thread(
+                                            target=self.robot.trigger_emotion,
+                                            args=("excited",),
+                                            daemon=True
+                                        ).start()
+                            except Exception as e:
+                                logger.error(f"Wake word error: {e}")
+                        continue
+                    
+                    # Check wake word timeout
+                    if listening_for_command and self._wake_word_detected_time:
+                        if time.time() - self._wake_word_detected_time > self.wake_word_timeout:
+                            logger.info(f"⏱️ Wake word timeout - returning to wake word detection")
+                            listening_for_command = False
+                            self._wake_word_detected_time = None
+                            vad_buffer = []
+                            speech_detected = False
+                            continue
+                    
+                    # Speech detection
+                    if listening_for_command:
+                        energy = np.sqrt(np.mean(chunk ** 2))
+                        is_speech = energy > 0.01
+                        
+                        if is_speech:
+                            vad_buffer.append(chunk)
+                            speech_detected = True
+                            silence_chunks = 0
+                        elif speech_detected:
+                            vad_buffer.append(chunk)
+                            silence_chunks += 1
+                            
+                            if silence_chunks >= max_silence_chunks and len(vad_buffer) > 10:
+                                audio_data = np.concatenate(vad_buffer)
+                                self.text_queue.put(audio_data)
+                                logger.info(f"Speech segment captured ({len(audio_data)} samples)")
+                                
+                                vad_buffer = []
+                                speech_detected = False
+                                silence_chunks = 0
+                                if wake_word_model:
+                                    listening_for_command = False
+                                    self._wake_word_detected_time = None
+                                    wake_word_buffer = []
+                                    logger.info("🔊 Listening for wake word...")
+                
+                except Exception as e:
+                    logger.error(f"PC mic loop error: {e}")
+                    time.sleep(0.1)
+        
+        except Exception as e:
+            logger.error(f"PC microphone loop fatal error: {e}", exc_info=True)
             self.running = False
     
     def _process_loop(self):
@@ -569,9 +864,39 @@ Rules:
                 logger.info("Transcribing speech...")
                 text = self._transcribe_audio(audio_data, whisper)
                 
+                logger.info(f"🔊 Whisper raw output: '{text}' (length: {len(text) if text else 0})")
+                
                 if not text or len(text.strip()) < 3:
-                    logger.info("No valid speech detected")
+                    logger.info(f"⚠️ No valid speech detected (text too short or empty)")
                     continue
+                
+                # Filter out Whisper hallucinations (repetitive patterns)
+                words = text.split()
+                if len(words) > 3:
+                    # Check for excessive repetition (same word repeated 3+ times)
+                    word_counts = {}
+                    for word in words:
+                        word_lower = word.lower().strip('!?.,')
+                        word_counts[word_lower] = word_counts.get(word_lower, 0) + 1
+                    
+                    max_count = max(word_counts.values()) if word_counts else 0
+                    if max_count >= 3:
+                        logger.warning(f"⚠️ Whisper hallucination detected (repetitive): '{text}'")
+                        continue
+                    
+                    # Check for common hallucination patterns
+                    hallucination_phrases = [
+                        "thank you for watching",
+                        "thanks for watching", 
+                        "please subscribe",
+                        "like and subscribe",
+                        "you you you",
+                        "yeah yeah yeah"
+                    ]
+                    text_lower = text.lower()
+                    if any(phrase in text_lower for phrase in hallucination_phrases):
+                        logger.warning(f"⚠️ Whisper hallucination detected (common phrase): '{text}'")
+                        continue
                 
                 logger.info(f"Transcribed: {text}")
                 
@@ -625,21 +950,81 @@ Rules:
             if audio_data.dtype != np.float32:
                 audio_data = audio_data.astype(np.float32)
             
-            # Normalize to [-1, 1]
-            if np.abs(audio_data).max() > 1.0:
-                audio_data = audio_data / np.abs(audio_data).max()
+            # Log original audio levels and sample count (debug only)
+            rms_before = np.sqrt(np.mean(audio_data**2))
+            max_before = np.abs(audio_data).max()
+            if self.debug_audio_enabled:
+                logger.info(f"🔊 Audio before processing - RMS: {rms_before:.4f}, Max: {max_before:.4f}")
+                logger.info(f"🔊 Audio shape: {audio_data.shape}, dtype: {audio_data.dtype}, samples: {len(audio_data)}")
             
-            # Transcribe
+            # Try to detect actual SDK sample rate
+            # Reachy SDK typically captures at 48kHz (not 16kHz as assumed)
+            sdk_sample_rate = 48000
+            if self.debug_audio_enabled:
+                logger.info(f"🔊 Assuming SDK capture rate: {sdk_sample_rate}Hz")
+            
+            # Save raw audio at SDK's native rate (only if debug enabled)
+            if self.debug_audio_enabled:
+                try:
+                    import scipy.io.wavfile as wavfile
+                    raw_path = "debug_audio_raw.wav"
+                    # Save at actual SDK rate so playback speed is correct
+                    wavfile.write(raw_path, sdk_sample_rate, (audio_data * 32767).astype(np.int16))
+                    logger.info(f"💾 Saved RAW audio to {raw_path} at {sdk_sample_rate}Hz")
+                except Exception as e:
+                    logger.debug(f"Could not save raw audio: {e}")
+            
+            # Resample to 16kHz for Whisper (Whisper requirement)
+            if sdk_sample_rate != 16000:
+                from scipy import signal
+                resampled_length = int(len(audio_data) * 16000 / sdk_sample_rate)
+                audio_data = signal.resample(audio_data, resampled_length)
+                if self.debug_audio_enabled:
+                    logger.info(f"🔊 Resampled audio from {sdk_sample_rate}Hz to 16kHz ({resampled_length} samples)")
+            
+            # Normalize based on RMS (not peak) to target 0.30 RMS for Whisper
+            # Aggressive amplification for quiet Reachy microphone
+            TARGET_RMS = 0.30
+            if rms_before > 0.001:  # Avoid division by zero
+                gain = TARGET_RMS / rms_before
+                # Increase max gain to 50x for quiet audio sources
+                gain = min(gain, 50.0)
+                audio_data = audio_data * gain
+                audio_data = np.clip(audio_data, -1.0, 1.0)
+            else:
+                logger.warning(f"🔊 RMS too low ({rms_before:.6f}), skipping amplification")
+                gain = 1.0
+            
+            rms_after = np.sqrt(np.mean(audio_data**2))
+            max_after = np.abs(audio_data).max()
+            if self.debug_audio_enabled:
+                logger.info(f"🔊 Audio after normalization - RMS: {rms_after:.4f}, Max: {max_after:.4f}, Gain: {gain:.2f}x")
+            
+            # Save amplified audio before Whisper (only if debug enabled)
+            if self.debug_audio_enabled:
+                try:
+                    import scipy.io.wavfile as wavfile
+                    processed_path = "debug_audio_amplified.wav"
+                    # Ensure 16kHz for the processed audio
+                    wavfile.write(processed_path, 16000, (audio_data * 32767).astype(np.int16))
+                    logger.info(f"💾 Saved AMPLIFIED audio to {processed_path} at 16kHz")
+                except Exception as e:
+                    logger.debug(f"Could not save amplified audio: {e}")
+            
+            # Transcribe with DISABLED VAD filter and lowered speech threshold
+            logger.info(f"🎤 Starting Whisper transcription...")
             segments, info = model.transcribe(
                 audio_data,
                 language="en",
                 beam_size=5,
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=500)
+                vad_filter=False,  # Disabled - we handle VAD in capture loop
+                no_speech_threshold=0.1  # Lower threshold (default 0.6) for quiet Reachy mic
             )
+            segments_list = list(segments)
+            logger.info(f"🎤 Whisper returned {len(segments_list)} segments, info: {info}")
             
             # Collect text from segments
-            text = " ".join([segment.text for segment in segments])
+            text = " ".join([segment.text for segment in segments_list])
             return text.strip()
         
         except Exception as e:
@@ -975,6 +1360,12 @@ Rules:
 
     def _speak(self, text: str):
         """Synthesize and play speech using Piper TTS - splits long text into chunks"""
+        # Acquire lock to prevent overlapping TTS calls
+        with self._tts_lock:
+            self._speak_locked(text)
+    
+    def _speak_locked(self, text: str):
+        """Internal TTS implementation (lock already held)"""
         try:
             import subprocess
             import tempfile
@@ -1026,14 +1417,27 @@ Rules:
             
             logger.info(f"[TTS] Split text into {len(chunks)} chunks for playback")
             
+            # Reset stop flag at start
+            self._stop_speech_requested = False
+            
             # Set speaking flag ONCE at the start of all chunks
             if self.robot:
                 self.robot._is_speaking = True
                 # Pause tracking during speech to prevent fighting with speech motion
                 self.robot._pause_tracking = True
+                # Quick antenna wiggle only (no head movement to avoid fighting with tracking)
+                try:
+                    self.robot.set_pose(antenna_left=100, antenna_right=-100, duration=0.3)
+                except Exception as e:
+                    logger.debug(f"Could not move antennas: {e}")
             
             # Generate and play each chunk sequentially
             for chunk_idx, chunk in enumerate(chunks):
+                # Check for stop request
+                if self._stop_speech_requested:
+                    logger.info("[TTS] Speech stopped by user request")
+                    break
+                
                 if not chunk.strip():
                     continue
                 
@@ -1117,6 +1521,7 @@ Rules:
                 self.robot._is_speaking = False
                 # Resume tracking after speech
                 self.robot._pause_tracking = False
+                logger.info("[TTS] Tracking resumed after speech")
                 # Reset to default position after speaking
                 self.robot.recenter_head()
             
@@ -1124,8 +1529,16 @@ Rules:
         
         except FileNotFoundError:
             logger.error("Piper CLI not found. Install piper or ensure it's in PATH.")
+            # Ensure tracking is resumed even on error
+            if self.robot:
+                self.robot._is_speaking = False
+                self.robot._pause_tracking = False
         except Exception as e:
             logger.error(f"TTS error: {e}", exc_info=True)
+            # Ensure tracking is resumed even on error
+            if self.robot:
+                self.robot._is_speaking = False
+                self.robot._pause_tracking = False
 
     def get_model_info(self):
         """Return a snapshot of loaded/selected models and errors"""
@@ -1135,6 +1548,28 @@ Rules:
             "piper": self.model_info.get("piper"),
             "error": self.init_error,
         }
+    
+    def stop_speech(self):
+        """Stop currently playing speech"""
+        logger.info("🛑 Stop speech requested")
+        self._stop_speech_requested = True
+        # Force clear speaking flags in case speech loop is stuck
+        if self.robot:
+            self.robot._is_speaking = False
+            self.robot._pause_tracking = False
+    
+    def manual_listen_trigger(self):
+        """Trigger manual listening mode - starts capturing speech immediately"""
+        logger.info("🎤 Manual listen triggered - starting capture...")
+        self._manual_listen_requested = True
+        
+        # Emotion disabled - motor noise interferes with audio capture
+        # if self.robot and hasattr(self.robot, 'trigger_emotion'):
+        #     threading.Thread(
+        #         target=self.robot.trigger_emotion,
+        #         args=("peaceful",),
+        #         daemon=True
+        #     ).start()
     
     def process_text_command(self, text: str) -> str:
         """Process a text command directly (bypass STT)"""
