@@ -111,6 +111,10 @@ Rules:
         self._pc_audio_queue = queue.Queue()
         self._pc_stream = None
         
+        # Audio device selection
+        self.audio_device_id = None  # None = use default/auto-detect
+        self.audio_device_name = None  # Human-readable device name
+        
         logger.info("VoiceAssistant initialized")
 
     def preload_models(self):
@@ -353,46 +357,46 @@ Rules:
         """Load wake word detection model"""
         if self._wake_word_model is None and self.wake_word_enabled:
             try:
+                import os
+                import glob
                 from openwakeword.model import Model as WakeWordModel
-                from openwakeword import utils as oww_utils
                 
                 logger.info(f"Loading wake word model: {self.wake_word}")
                 
-                # Download models if not already present
-                try:
-                    oww_utils.download_models()
-                    logger.info("✓ Wake word models downloaded/verified")
-                except Exception as e:
-                    logger.warning(f"Failed to download wake word models (may already exist): {e}")
+                # Use custom model directory in our models folder
+                custom_model_dir = os.path.join(os.path.dirname(__file__), "models", "openwakeword")
+                os.makedirs(custom_model_dir, exist_ok=True)
                 
-                # First, try loading ALL models to see what's available
-                logger.info("Loading all available wake word models to check availability...")
-                try:
-                    test_model = WakeWordModel(inference_framework='onnx')
-                    available_models = list(test_model.models.keys())
-                    logger.info(f"📋 Available wake word models: {available_models}")
-                    del test_model
-                except Exception as e:
-                    logger.warning(f"Could not list available models: {e}")
-                    available_models = []
+                # Check for custom model file
+                custom_model_path = os.path.join(custom_model_dir, f"{self.wake_word}.onnx")
                 
-                # Load the specified wake word model
-                logger.info(f"Attempting to load specific model: '{self.wake_word}'")
-                self._wake_word_model = WakeWordModel(
-                    wakeword_models=[self.wake_word],
-                    inference_framework='onnx'
-                )
+                # Load model - either from custom path or built-in
+                logger.info(f"Attempting to load wake word model: '{self.wake_word}'")
                 
-                # Log loaded models and verify the wake word exists
+                if os.path.exists(custom_model_path):
+                    # Load custom model by file path
+                    logger.info(f"✓ Found custom model at: {custom_model_path}")
+                    self._wake_word_model = WakeWordModel(
+                        wakeword_models=[custom_model_path],
+                        inference_framework='onnx'
+                    )
+                else:
+                    # Load built-in model by name
+                    logger.info(f"Loading built-in model: {self.wake_word}")
+                    self._wake_word_model = WakeWordModel(
+                        wakeword_models=[self.wake_word],
+                        inference_framework='onnx'
+                    )
+                
+                # Log loaded models
                 loaded_models = list(self._wake_word_model.models.keys())
-                logger.info(f"✓ Wake word model loaded: {loaded_models}")
+                logger.info(f"✓ Wake word model loaded successfully: {loaded_models}")
                 
-                if self.wake_word not in loaded_models:
-                    logger.error(f"❌ Requested wake word '{self.wake_word}' not found in loaded models: {loaded_models}")
-                    logger.info(f"Available models: {loaded_models}")
-                    logger.info("Try using one of these instead: 'alexa', 'hey_mycroft', 'hey_rhasspy'")
-                    self.wake_word_enabled = False
-                    return None
+                # List all available models (built-in + custom)
+                custom_models = [os.path.splitext(os.path.basename(f))[0] 
+                                for f in glob.glob(os.path.join(custom_model_dir, "*.onnx"))]
+                logger.info(f"📋 Available custom models: {custom_models}")
+                
                 self.model_info["wake_word"] = {
                     "model": self.wake_word,
                     "threshold": self.wake_word_threshold,
@@ -456,6 +460,86 @@ Rules:
                 pass
         logger.info("Voice assistant stopped")
     
+    def _find_reachy_audio_device(self):
+        """Find the Reachy Mini Audio device or fallback to first available input device."""
+        try:
+            devices = sd.query_devices()
+            
+            # Priority 1: If user specified a device, use it
+            if self.audio_device_id is not None:
+                if self.audio_device_id < len(devices) and devices[self.audio_device_id]['max_input_channels'] > 0:
+                    logger.info(f"✓ Using user-selected audio device {self.audio_device_id}: {devices[self.audio_device_id]['name']}")
+                    return self.audio_device_id
+                else:
+                    logger.warning(f"User-selected device {self.audio_device_id} not available, auto-detecting...")
+            
+            # Priority 2: Look for Reachy Mini Audio device
+            for i, device in enumerate(devices):
+                if device['max_input_channels'] > 0:
+                    device_name = device['name'].lower()
+                    if 'reachy' in device_name or 'echo' in device_name or 'speakerphone' in device_name:
+                        logger.info(f"✓ Found Reachy audio device at index {i}: {device['name']}")
+                        self.audio_device_id = i
+                        self.audio_device_name = device['name']
+                        return i
+            
+            # Priority 3: Use default input device
+            default_device = sd.default.device[0]
+            if devices[default_device]['max_input_channels'] > 0:
+                logger.info(f"Using default input device {default_device}: {devices[default_device]['name']}")
+                self.audio_device_id = default_device
+                self.audio_device_name = devices[default_device]['name']
+                return default_device
+            
+            # Priority 4: Find first available input device
+            for i, device in enumerate(devices):
+                if device['max_input_channels'] > 0:
+                    logger.info(f"Using available input device {i}: {device['name']}")
+                    self.audio_device_id = i
+                    self.audio_device_name = device['name']
+                    return i
+            
+            logger.error("No input devices found!")
+            return None
+        except Exception as e:
+            logger.error(f"Error finding audio device: {e}")
+            return None
+    
+    def get_available_audio_devices(self):
+        """Get list of available audio input devices."""
+        try:
+            devices = sd.query_devices()
+            available = []
+            for i, device in enumerate(devices):
+                if device['max_input_channels'] > 0:
+                    available.append({
+                        'id': i,
+                        'name': device['name'],
+                        'channels': device['max_input_channels'],
+                        'is_default': i == sd.default.device[0],
+                        'is_selected': i == self.audio_device_id
+                    })
+            return available
+        except Exception as e:
+            logger.error(f"Error querying audio devices: {e}")
+            return []
+    
+    def set_audio_device(self, device_id):
+        """Set the audio device to use for wake word detection."""
+        try:
+            devices = sd.query_devices()
+            if device_id < len(devices) and devices[device_id]['max_input_channels'] > 0:
+                self.audio_device_id = device_id
+                self.audio_device_name = devices[device_id]['name']
+                logger.info(f"✓ Audio device set to {device_id}: {self.audio_device_name}")
+                return True
+            else:
+                logger.error(f"Invalid audio device ID: {device_id}")
+                return False
+        except Exception as e:
+            logger.error(f"Error setting audio device: {e}")
+            return False
+
     def _start_pc_microphone(self):
         """Start PC microphone using sounddevice as fallback."""
         def audio_callback(indata, frames, time_info, status):
@@ -467,12 +551,18 @@ Rules:
         
         try:
             logger.info("🎤 Starting PC microphone (sounddevice fallback)...")
+            
+            # Find the Reachy audio device
+            device_id = self._find_reachy_audio_device()
+            
             self._pc_stream = sd.InputStream(
+                device=device_id,
                 samplerate=self.sample_rate,
                 channels=1,
                 dtype='float32',
                 blocksize=self.chunk_size,
-                callback=audio_callback
+                callback=audio_callback,
+                latency='low'
             )
             self._pc_stream.start()
             logger.info("✅ PC microphone active")
@@ -645,11 +735,11 @@ Rules:
                                     self._ww_check_count += 1
                                     
                                     # Log scores more frequently to help tune threshold
-                                    if self._ww_check_count % 5 == 0 or score > 0.002:  # Log when score is elevated
+                                    if self._ww_check_count % 5 == 0 or score > (self.wake_word_threshold * 0.4):  # Log when score is elevated
                                         logger.info(f"🔍 Wake word '{self.wake_word}' score: {score:.6f}")
                                     
-                                    # Lowered threshold for testing - user reports not triggering
-                                    effective_threshold = 0.004
+                                    # Use configured threshold (default 0.5)
+                                    effective_threshold = self.wake_word_threshold
                                     if score > effective_threshold:
                                         logger.info(f"🎤✨ WAKE WORD DETECTED! (score: {score:.6f}, threshold: {effective_threshold})")
                                         logger.info("💬 Listening for your command... (speak now)")
@@ -657,14 +747,6 @@ Rules:
                                         self._wake_word_detected_time = time.time()
                                         vad_buffer = []  # Clear buffer to start fresh
                                         speech_detected = False
-                                        
-                                        # Optional: play a beep or visual indication
-                                        if self.robot and hasattr(self.robot, 'trigger_emotion'):
-                                            threading.Thread(
-                                                target=self.robot.trigger_emotion,
-                                                args=("excited",),
-                                                daemon=True
-                                            ).start()
                                 except TypeError as te:
                                     logger.error(f"❌ Wake word model prediction failed (TypeError): {te}. Prediction object type: {type(prediction)}")
                                 except Exception as e:
@@ -779,21 +861,14 @@ Rules:
                                 prediction = wake_word_model.predict(detection_chunk)
                                 score = prediction.get(self.wake_word, 0.0)
                                 
-                                # Lowered threshold for testing
-                                effective_threshold = 0.004
+                                # Use configured threshold (default 0.5)
+                                effective_threshold = self.wake_word_threshold
                                 if score > effective_threshold:
                                     logger.info(f"🎤✨ WAKE WORD DETECTED! (score: {score:.6f}, threshold: {effective_threshold})")
                                     listening_for_command = True
                                     self._wake_word_detected_time = time.time()
                                     vad_buffer = []
                                     speech_detected = False
-                                    
-                                    if self.robot and hasattr(self.robot, 'trigger_emotion'):
-                                        threading.Thread(
-                                            target=self.robot.trigger_emotion,
-                                            args=("excited",),
-                                            daemon=True
-                                        ).start()
                             except Exception as e:
                                 logger.error(f"Wake word error: {e}")
                         continue

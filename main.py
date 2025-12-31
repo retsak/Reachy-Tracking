@@ -868,6 +868,9 @@ def enable_voice():
                 voice_assistant.wake_word = saved_wake_word_config.get("wake_word", "hey_jarvis")
                 voice_assistant.wake_word_threshold = saved_wake_word_config.get("threshold", 0.5)
                 voice_assistant.wake_word_timeout = saved_wake_word_config.get("timeout", 5.0)
+                audio_device_id = saved_wake_word_config.get("audio_device_id")
+                if audio_device_id is not None:
+                    voice_assistant.set_audio_device(audio_device_id)
                 logger.info(f"Applied saved wake word settings: {saved_wake_word_config}")
                 # Preload wake word model so status shows loaded on startup
                 if voice_assistant.wake_word_enabled:
@@ -1041,8 +1044,20 @@ async def configure_wake_word(data: dict):
         if "enabled" in data:
             voice_assistant.wake_word_enabled = bool(data["enabled"])
         if "wake_word" in data:
-            # Validate wake word model name
+            # Validate wake word model name - check both built-in and custom models
+            import os
+            import glob
+            
+            # Built-in models
             valid_models = ["alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy"]
+            
+            # Custom models in models/openwakeword directory
+            custom_model_dir = os.path.join(os.path.dirname(__file__), "models", "openwakeword")
+            if os.path.exists(custom_model_dir):
+                custom_models = [os.path.splitext(os.path.basename(f))[0] 
+                                for f in glob.glob(os.path.join(custom_model_dir, "*.onnx"))]
+                valid_models.extend(custom_models)
+            
             if data["wake_word"] in valid_models:
                 voice_assistant.wake_word = data["wake_word"]
                 # Reset model to load new wake word
@@ -1061,13 +1076,20 @@ async def configure_wake_word(data: dict):
                 voice_assistant.wake_word_timeout = timeout
             else:
                 return {"status": "error", "message": "Timeout must be positive"}
+        if "audio_device_id" in data:
+            device_id = int(data["audio_device_id"])
+            if voice_assistant.set_audio_device(device_id):
+                logger.info(f"Audio device updated to {device_id}")
+            else:
+                return {"status": "error", "message": f"Invalid audio device ID: {device_id}"}
         
         # Save settings to file
         config = {
             "enabled": voice_assistant.wake_word_enabled,
             "wake_word": voice_assistant.wake_word,
             "threshold": voice_assistant.wake_word_threshold,
-            "timeout": voice_assistant.wake_word_timeout
+            "timeout": voice_assistant.wake_word_timeout,
+            "audio_device_id": voice_assistant.audio_device_id
         }
         _save_wake_word_settings(config)
         
@@ -1079,12 +1101,43 @@ async def configure_wake_word(data: dict):
         logger.error(f"Wake word configuration error: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
 
+@app.get("/api/voice/audio-devices")
+async def get_audio_devices():
+    """Get list of available audio input devices"""
+    global voice_assistant
+    
+    try:
+        if voice_assistant is None:
+            voice_assistant = get_assistant(robot)
+        
+        devices = voice_assistant.get_available_audio_devices()
+        return {
+            "status": "ok",
+            "devices": devices,
+            "selected_device_id": voice_assistant.audio_device_id,
+            "selected_device_name": voice_assistant.audio_device_name
+        }
+    except Exception as e:
+        logger.error(f"Error getting audio devices: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
 @app.get("/api/voice/wake-word/status")
 async def get_wake_word_status():
     """Get current wake word detection configuration"""
     global voice_assistant
     
     try:
+        import os
+        import glob
+        
+        # Get available models
+        valid_models = ["alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy"]
+        custom_model_dir = os.path.join(os.path.dirname(__file__), "models", "openwakeword")
+        if os.path.exists(custom_model_dir):
+            custom_models = [os.path.splitext(os.path.basename(f))[0] 
+                            for f in glob.glob(os.path.join(custom_model_dir, "*.onnx"))]
+            valid_models.extend(custom_models)
+        
         # Load saved settings if available
         saved_config = _load_wake_word_settings()
         
@@ -1096,7 +1149,8 @@ async def get_wake_word_status():
                     "wake_word": saved_config.get("wake_word", "hey_jarvis"),
                     "threshold": saved_config.get("threshold", 0.5),
                     "timeout": saved_config.get("timeout", 5.0),
-                    "available_models": ["alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy"],
+                    "audio_device_id": saved_config.get("audio_device_id"),
+                    "available_models": valid_models,
                     "model_loaded": False
                 }
             else:
@@ -1105,7 +1159,8 @@ async def get_wake_word_status():
                     "wake_word": "hey_jarvis",
                     "threshold": 0.5,
                     "timeout": 5.0,
-                    "available_models": ["alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy"],
+                    "audio_device_id": None,
+                    "available_models": valid_models,
                     "model_loaded": False
                 }
         
@@ -1114,7 +1169,9 @@ async def get_wake_word_status():
             "wake_word": voice_assistant.wake_word,
             "threshold": voice_assistant.wake_word_threshold,
             "timeout": voice_assistant.wake_word_timeout,
-            "available_models": ["alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy"],
+            "audio_device_id": voice_assistant.audio_device_id,
+            "audio_device_name": voice_assistant.audio_device_name,
+            "available_models": valid_models,
             "model_loaded": voice_assistant._wake_word_model is not None
         }
     except Exception as e:
