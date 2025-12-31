@@ -663,24 +663,60 @@ Rules:
                 pc_audio_queue = queue.Queue() if use_sounddevice else None
                 
                 if use_sounddevice:
+                    # Query device to check supported sample rates
+                    device_native_rate = self.sample_rate  # Default to 16kHz
+                    try:
+                        device_info = sd.query_devices(self.audio_device_id)
+                        logger.info(f"📊 Device info: {device_info}")
+                        device_native_rate = int(device_info['default_samplerate'])
+                        logger.info(f"📊 Device native sample rate: {device_native_rate}Hz, target: {self.sample_rate}Hz")
+                        
+                        # Use native sample rate to avoid sounddevice's resampling issues
+                        # We'll do our own resampling to 16kHz for consistency
+                        native_chunk_size = int(device_native_rate * self.chunk_duration)
+                        logger.info(f"📊 Using native rate {device_native_rate}Hz with chunk size {native_chunk_size}")
+                    except Exception as e:
+                        logger.warning(f"Could not query device info: {e}")
+                        device_native_rate = self.sample_rate
+                        native_chunk_size = self.chunk_size
+                    
+                    # Store for resampling
+                    self._device_native_rate = device_native_rate
+                    self._needs_resampling = (device_native_rate != self.sample_rate)
+                    
                     def audio_callback(indata, frames, time_info, status):
                         if status:
                             logger.warning(f"Audio status: {status}")
                         audio = indata[:, 0] if indata.ndim > 1 else indata
+                        
+                        # Resample if needed (device native rate → 16kHz)
+                        if self._needs_resampling:
+                            try:
+                                target_length = int(len(audio) * self.sample_rate / self._device_native_rate)
+                                audio = signal.resample(audio, target_length)
+                            except Exception as e:
+                                logger.error(f"Resampling error: {e}")
+                        
+                        # Debug: Log actual chunk size received
+                        if not hasattr(self, '_sd_chunk_count'):
+                            self._sd_chunk_count = 0
+                        self._sd_chunk_count += 1
+                        if self._sd_chunk_count % 50 == 0:
+                            logger.info(f"📦 Sounddevice chunk: frames={frames}, resampled_shape={audio.shape}, expected={self.chunk_size}")
                         pc_audio_queue.put(audio.copy())
                     
                     try:
                         pc_stream = sd.InputStream(
                             device=self.audio_device_id,
-                            samplerate=self.sample_rate,
+                            samplerate=device_native_rate,  # Use native rate
                             channels=1,
                             dtype='float32',
-                            blocksize=self.chunk_size,
+                            blocksize=native_chunk_size,  # Adjusted for native rate
                             callback=audio_callback,
                             latency='low'
                         )
                         pc_stream.start()
-                        logger.info("✓ Sounddevice stream active")
+                        logger.info(f"✓ Sounddevice stream active at {device_native_rate}Hz")
                     except Exception as e:
                         logger.error(f"Failed to start sounddevice: {e}")
                         self.running = False
