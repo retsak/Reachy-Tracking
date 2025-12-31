@@ -56,7 +56,7 @@ async def log_requests_middleware(request, call_next):
     response = await call_next(request)
     
     # Skip logging for polling endpoints unless verbose logging is enabled
-    quiet_endpoints = ["/status", "/api/voice/level", "/api/voice/status", "/api/voice/transcript", "/api/voice/response"]
+    quiet_endpoints = ["/status", "/api/voice/level", "/api/voice/status", "/api/voice/transcript", "/api/voice/response", "/api/voice/processing"]
     if request.url.path in quiet_endpoints and not VERBOSE_LOGGING:
         return response
     
@@ -139,6 +139,55 @@ def _save_wake_word_settings(config):
     except Exception as e:
         logger.error(f"Failed to save wake word settings: {e}")
         return False
+
+def _apply_wake_word_settings(voice_assistant):
+    """Apply saved wake word settings to voice assistant"""
+    saved_wake_word_config = _load_wake_word_settings()
+    if saved_wake_word_config:
+        voice_assistant.wake_word_enabled = saved_wake_word_config.get("enabled", True)
+        voice_assistant.wake_word = saved_wake_word_config.get("wake_word", "hey_jarvis")
+        voice_assistant.wake_word_threshold = saved_wake_word_config.get("threshold", 0.5)
+        voice_assistant.wake_word_timeout = saved_wake_word_config.get("timeout", 5.0)
+        
+        # Restore audio input source preference with validation
+        audio_input_source = saved_wake_word_config.get("audio_input_source")
+        if audio_input_source:
+            if audio_input_source == "sdk":
+                # SDK is always available
+                voice_assistant.set_audio_device("sdk")
+                logger.info("Restored audio input: Reachy SDK")
+            else:
+                # Validate that the saved device is still available
+                audio_device_id = saved_wake_word_config.get("audio_device_id")
+                if audio_device_id is not None:
+                    # Try to set the device - will return False if device no longer exists
+                    if voice_assistant.set_audio_device(audio_device_id):
+                        logger.info(f"Restored audio input device: {audio_device_id}")
+                    else:
+                        # Device no longer available, fall back to SDK
+                        logger.warning(f"Saved audio device {audio_device_id} no longer available, reverting to SDK")
+                        voice_assistant.set_audio_device("sdk")
+                        # Update config to reflect the fallback
+                        saved_wake_word_config["audio_input_source"] = "sdk"
+                        saved_wake_word_config["audio_device_id"] = None
+                        _save_wake_word_settings(saved_wake_word_config)
+        else:
+            # No audio source saved, default to SDK
+            voice_assistant.set_audio_device("sdk")
+            logger.info("No saved audio input, using SDK default")
+        
+        logger.info(f"Applied saved wake word settings: {saved_wake_word_config}")
+        
+        # Preload wake word model so status shows loaded on startup
+        if voice_assistant.wake_word_enabled:
+            try:
+                voice_assistant._load_wake_word_model()
+                logger.info("Wake word model preloaded on enable")
+            except Exception as e:
+                logger.warning(f"Could not preload wake word model: {e}")
+        
+        return True
+    return False
 
 def _load_tuning_settings():
     """Load tuning settings from file if exists."""
@@ -861,61 +910,28 @@ def enable_voice():
         if voice_assistant is None:
             voice_assistant = get_assistant(robot)
             
-            # Load saved wake word settings
-            saved_wake_word_config = _load_wake_word_settings()
-            if saved_wake_word_config:
-                voice_assistant.wake_word_enabled = saved_wake_word_config.get("enabled", True)
-                voice_assistant.wake_word = saved_wake_word_config.get("wake_word", "hey_jarvis")
-                voice_assistant.wake_word_threshold = saved_wake_word_config.get("threshold", 0.5)
-                voice_assistant.wake_word_timeout = saved_wake_word_config.get("timeout", 5.0)
-                
-                # Restore audio input source preference with validation
-                audio_input_source = saved_wake_word_config.get("audio_input_source")
-                if audio_input_source:
-                    if audio_input_source == "sdk":
-                        # SDK is always available
-                        voice_assistant.set_audio_device("sdk")
-                        logger.info("Restored audio input: Reachy SDK")
-                    else:
-                        # Validate that the saved device is still available
-                        audio_device_id = saved_wake_word_config.get("audio_device_id")
-                        if audio_device_id is not None:
-                            # Try to set the device - will return False if device no longer exists
-                            if voice_assistant.set_audio_device(audio_device_id):
-                                logger.info(f"Restored audio input device: {audio_device_id}")
-                            else:
-                                # Device no longer available, fall back to SDK
-                                logger.warning(f"Saved audio device {audio_device_id} no longer available, reverting to SDK")
-                                voice_assistant.set_audio_device("sdk")
-                                # Update config to reflect the fallback
-                                saved_wake_word_config["audio_input_source"] = "sdk"
-                                saved_wake_word_config["audio_device_id"] = None
-                                _save_wake_word_settings(saved_wake_word_config)
-                else:
-                    # No audio source saved, default to SDK
-                    voice_assistant.set_audio_device("sdk")
-                    logger.info("No saved audio input, using SDK default")
-                
-                logger.info(f"Applied saved wake word settings: {saved_wake_word_config}")
-                # Preload wake word model so status shows loaded on startup
-                if voice_assistant.wake_word_enabled:
-                    try:
-                        voice_assistant._load_wake_word_model()
-                        logger.info("Wake word model preloaded on enable")
-                    except Exception as e:
-                        logger.warning(f"Could not preload wake word model: {e}")
-            
-            # Setup callbacks
-            def on_speech(text):
-                VOICE_STATE["last_transcript"] = text
-                VOICE_STATE["conversation_history"].append({"role": "user", "content": text})
-            
-            def on_response(text):
-                VOICE_STATE["last_response"] = text
-                VOICE_STATE["conversation_history"].append({"role": "assistant", "content": text})
-            
-            voice_assistant.on_speech_detected = on_speech
-            voice_assistant.on_response_ready = on_response
+            # Apply saved wake word settings
+            _apply_wake_word_settings(voice_assistant)
+            logger.info("[INIT] Voice assistant created and configured")
+        
+        # Setup callbacks every time we enable (not just on first creation)
+        # This ensures callbacks are registered even if voice_assistant was reused
+        def on_wake_word():
+            """Called when wake word is detected"""
+            pass  # Typing indicator will be managed by is_processing flag
+        
+        def on_speech(text):
+            VOICE_STATE["last_transcript"] = text
+            VOICE_STATE["conversation_history"].append({"role": "user", "content": text})
+        
+        def on_response(text):
+            VOICE_STATE["last_response"] = text
+            VOICE_STATE["conversation_history"].append({"role": "assistant", "content": text})
+        
+        voice_assistant.on_wake_word_detected = on_wake_word
+        voice_assistant.on_speech_detected = on_speech
+        voice_assistant.on_response_ready = on_response
+        logger.info("[INIT] Voice assistant callbacks registered")
         
         voice_assistant.start_listening()
         # Snapshot model info (may update after lazy load)
@@ -978,6 +994,7 @@ async def text_command(data: dict):
     try:
         if voice_assistant is None:
             voice_assistant = get_assistant(robot)
+            _apply_wake_word_settings(voice_assistant)
         
         response = voice_assistant.process_text_command(text)
         
@@ -1034,6 +1051,7 @@ async def speak_text(data: dict):
     try:
         if voice_assistant is None:
             voice_assistant = get_assistant(robot)
+            _apply_wake_word_settings(voice_assistant)
         
         voice_assistant.speak_text(text)
         return {"status": "ok"}
@@ -1064,6 +1082,7 @@ async def configure_wake_word(data: dict):
     try:
         if voice_assistant is None:
             voice_assistant = get_assistant(robot)
+            _apply_wake_word_settings(voice_assistant)
         
         # Update settings
         if "enabled" in data:
@@ -1145,6 +1164,7 @@ async def get_audio_devices():
     try:
         if voice_assistant is None:
             voice_assistant = get_assistant(robot)
+            _apply_wake_word_settings(voice_assistant)
         
         devices = voice_assistant.get_available_audio_devices()
         return {
@@ -1282,6 +1302,18 @@ async def get_latest_response():
     except Exception as e:
         logger.error(f"Response fetch error: {e}", exc_info=True)
         return {"text": "", "has_new": False}
+
+@app.get("/api/voice/processing")
+async def get_processing_status():
+    """Check if voice assistant is currently processing"""
+    global voice_assistant
+    try:
+        if voice_assistant is None:
+            return {"processing": False}
+        return {"processing": voice_assistant.is_processing}
+    except Exception as e:
+        logger.error(f"Processing status error: {e}", exc_info=True)
+        return {"processing": False}
 
 
 # ══════════════════════════════════════

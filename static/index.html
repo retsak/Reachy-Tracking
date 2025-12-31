@@ -580,12 +580,46 @@
         // ══════════════════════════════════════
         // CHAT
         // ══════════════════════════════════════
+        let typingIndicator = null;
+        let lastTranscriptText = '';  // Track last message to prevent duplicates
+        let lastResponseText = '';    // Track last response to prevent duplicates
+        
         function addMsg(role, text) {
+            // Prevent duplicate messages
+            if (role === 'user' && text === lastTranscriptText) {
+                console.log('[DUPE] Skipping duplicate user message:', text);
+                return;
+            }
+            if (role === 'assistant' && text === lastResponseText) {
+                console.log('[DUPE] Skipping duplicate assistant message:', text);
+                return;
+            }
+            
+            // Update tracking
+            if (role === 'user') lastTranscriptText = text;
+            if (role === 'assistant') lastResponseText = text;
+            
             const el = document.createElement('div');
             el.className = `msg msg-${role}`;
             el.textContent = text;
             $('chat-messages').appendChild(el);
             $('chat-messages').scrollTop = $('chat-messages').scrollHeight;
+        }
+        
+        function showTypingIndicator() {
+            if (typingIndicator) return; // Already showing
+            typingIndicator = document.createElement('div');
+            typingIndicator.className = 'msg msg-typing';
+            typingIndicator.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+            $('chat-messages').appendChild(typingIndicator);
+            $('chat-messages').scrollTop = $('chat-messages').scrollHeight;
+        }
+        
+        function hideTypingIndicator() {
+            if (typingIndicator) {
+                typingIndicator.remove();
+                typingIndicator = null;
+            }
         }
 
         $('chat-send').onclick = async () => {
@@ -601,7 +635,8 @@
                     body: JSON.stringify({ text, speak: true })
                 });
                 const data = await res.json();
-                if (data.response) addMsg('assistant', data.response);
+                // Don't add response here - let polling handle it to avoid duplicates
+                showTypingIndicator();
             } catch (e) {
                 addMsg('system', 'Error sending message');
             }
@@ -609,31 +644,57 @@
 
         $('chat-input').onkeypress = e => { if (e.key === 'Enter') $('chat-send').click(); };
 
-        // Poll for transcriptions and display in chat
-        const transcriptionPoller = setInterval(async () => {
-            try {
-                const res = await fetch('/api/voice/transcript');
-                const data = await res.json();
-                if (data.has_new && data.text) {
-                    addMsg('user', data.text);
+        // Ensure polling intervals are only created once
+        if (!window.chatPollersInitialized) {
+            window.chatPollersInitialized = true;
+            
+            // Poll for transcriptions and display in chat
+            const transcriptionPoller = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/voice/transcript');
+                    const data = await res.json();
+                    console.log('[POLL] Transcript:', data);
+                    if (data.has_new && data.text) {
+                        addMsg('user', data.text);
+                    }
+                } catch (e) {
+                    console.error('[POLL] Transcript error:', e);
                 }
-            } catch (e) {
-                // Silently fail
-            }
-        }, 500);
+            }, 500);
 
-        // Poll for assistant responses and display in chat
-        const responsePoller = setInterval(async () => {
-            try {
-                const res = await fetch('/api/voice/response');
-                const data = await res.json();
-                if (data.has_new && data.text) {
-                    addMsg('assistant', data.text);
+            // Poll for assistant responses and display in chat
+            const responsePoller = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/voice/response');
+                    const data = await res.json();
+                    console.log('[POLL] Response:', data);
+                    if (data.has_new && data.text) {
+                        hideTypingIndicator();
+                        addMsg('assistant', data.text);
+                    }
+                } catch (e) {
+                    console.error('[POLL] Response error:', e);
                 }
-            } catch (e) {
-                // Silently fail
-            }
-        }, 500);
+            }, 500);
+
+            // Poll for processing status to show/hide typing indicator
+            const processingPoller = setInterval(async () => {
+                try {
+                    const res = await fetch('/api/voice/processing');
+                    const data = await res.json();
+                    console.log('[POLL] Processing:', data);
+                    if (data.processing) {
+                        showTypingIndicator();
+                    } else {
+                        hideTypingIndicator();
+                    }
+                } catch (e) {
+                    console.error('[POLL] Processing error:', e);
+                }
+            }, 300);
+            
+            console.log('[INIT] Chat polling intervals initialized');
+        }
 
         // Debug audio logging checkbox
         const debugCheckbox = $('debug-audio-enabled');
@@ -767,11 +828,32 @@
             setTimeout(resetPTT, 2000); // Reset after 2s
         };
 
+        // Format wake word for display (convert oh_kay_computer -> "Okay Computer")
+        function formatWakeWord(wakeWord) {
+            const wakeWordNames = {
+                'hay_ree_chee': 'Hay Reachy',
+                'hey_ree_shee': 'Hey Reachy',
+                'oh_kay_computer': 'Okay Computer',
+                'hey_jarvis': 'Hey Jarvis',
+                'alexa': 'Alexa',
+                'hey_mycroft': 'Hey Mycroft',
+                'hey_rhasspy': 'Hey Rhasspy'
+            };
+            return wakeWordNames[wakeWord] || wakeWord.replace(/_/g, ' ');
+        }
+
+        // Update PTT button text with current wake word
+        function updatePTTButtonText() {
+            const wakeWord = $('wake-word-model').value;
+            const wakeWordDisplay = formatWakeWord(wakeWord);
+            pttBtn.innerHTML = `🎤 Hold to Talk or Say "${wakeWordDisplay}"`;
+        }
+
         function resetPTT() {
             pttActive = false;
             pttBtn.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
             pttBtn.style.transform = 'scale(1)';
-            pttBtn.innerHTML = '🎤 Hold to Talk';
+            updatePTTButtonText();
             pttStatus.textContent = '';
         }
 
@@ -1435,6 +1517,9 @@
                 $('wake-word-timeout').value = data.timeout || 5;
                 $('wake-word-timeout-val').textContent = (data.timeout || 5) + 's';
                 
+                // Update PTT button text with current wake word
+                updatePTTButtonText();
+                
                 // Show status
                 $('wake-word-status').style.display = 'block';
                 const modelStatus = data.model_loaded ? '✅ Loaded' : '⏳ Not loaded';
@@ -1457,6 +1542,11 @@
         // Update timeout display in real-time
         $('wake-word-timeout').oninput = () => {
             $('wake-word-timeout-val').textContent = $('wake-word-timeout').value + 's';
+        };
+        
+        // Update PTT button when wake word model changes
+        $('wake-word-model').onchange = () => {
+            updatePTTButtonText();
         };
         
         // Save wake word settings

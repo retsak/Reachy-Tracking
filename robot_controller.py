@@ -837,7 +837,8 @@ class RobotController:
                 # Let the next tracking update smoothly restore position
                 # No explicit set_pose call to avoid conflict with tracking system
 
-            threading.Thread(target=motion_thread, daemon=True).start()
+            # DISABLED: Voice assistant should keep robot still during speech
+            # threading.Thread(target=motion_thread, daemon=True).start()
             
             # Use SDK in context manager pattern with retry logic
             print(f"[AUDIO] Initializing SDK for playback...")
