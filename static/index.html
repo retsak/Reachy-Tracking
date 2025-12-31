@@ -400,6 +400,14 @@
                     </div>
                     
                     <div class="settings-row">
+                        <label>Audio Input Device:</label>
+                        <select id="audio-device-select" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:4px; background:var(--bg-elevated); color:var(--text);">
+                            <option value="">🔄 Loading devices...</option>
+                        </select>
+                        <p class="info-text" style="font-size:11px; margin-top:4px;">Select the microphone to use for wake word detection. Auto-detected: Reachy Mini Audio.</p>
+                    </div>
+                    
+                    <div class="settings-row">
                         <label>Wake Word:</label>
                         <select id="wake-word-model" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:4px; background:var(--bg-elevated); color:var(--text);">
                             <option value="hay_ree_chee">🤖 Hay Reachy (Custom #1)</option>
@@ -1376,6 +1384,32 @@
         // WAKE WORD DETECTION SETTINGS
         // ══════════════════════════════════════
         
+        async function loadAudioDevices() {
+            try {
+                const res = await fetch('/api/voice/audio-devices');
+                const data = await res.json();
+                
+                if (!data.devices || data.devices.length === 0) {
+                    $('audio-device-select').innerHTML = '<option value="">No audio devices found</option>';
+                    return;
+                }
+                
+                // Build device options
+                let html = '';
+                data.devices.forEach(device => {
+                    const selected = device.is_selected ? ' selected' : '';
+                    const marker = device.is_default ? ' (System Default)' : '';
+                    html += `<option value="${device.id}"${selected}>${device.name}${marker}</option>`;
+                });
+                
+                $('audio-device-select').innerHTML = html;
+                vlog('Audio devices loaded:', data.devices);
+            } catch (e) {
+                console.error('Error loading audio devices:', e);
+                $('audio-device-select').innerHTML = '<option value="">Error loading devices</option>';
+            }
+        }
+        
         async function loadWakeWordSettings() {
             try {
                 const res = await fetch('/api/voice/wake-word/status');
@@ -1392,6 +1426,9 @@
                 $('wake-word-status').style.display = 'block';
                 const modelStatus = data.model_loaded ? '✅ Loaded' : '⏳ Not loaded';
                 $('wake-word-status-text').textContent = `${data.enabled ? 'Enabled' : 'Disabled'} | Model: ${modelStatus}`;
+                
+                // Also load audio devices
+                await loadAudioDevices();
                 
                 logger.info('Wake word settings loaded:', data);
             } catch (e) {
@@ -1412,12 +1449,18 @@
         // Save wake word settings
         $('save-wake-word-btn').onclick = async () => {
             try {
+                const deviceId = $('audio-device-select').value;
                 const settings = {
                     enabled: $('wake-word-enabled').checked,
                     wake_word: $('wake-word-model').value,
                     threshold: parseFloat($('wake-word-threshold').value),
                     timeout: parseFloat($('wake-word-timeout').value)
                 };
+                
+                // Include device ID if one is selected
+                if (deviceId) {
+                    settings.audio_device_id = parseInt(deviceId);
+                }
                 
                 const res = await fetch('/api/voice/wake-word/configure', {
                     method: 'POST',
