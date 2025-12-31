@@ -99,12 +99,16 @@ Wake word detection has been successfully integrated into the Reachy Tracking & 
 
 1. **Voice Assistant Enabled** → `start_listening()` called
 2. **Load Wake Word Model** → openwakeword model loaded with selected wake word
-3. **Continuous Monitoring** → Audio stream processed in 80ms chunks
-4. **Wake Word Detected** → Score exceeds threshold
-5. **Visual Feedback** → Robot shows "excited" emotion
-6. **Listen for Command** → 5 seconds (configurable) to speak command
-7. **Process Speech** → STT → LLM → TTS pipeline
-8. **Return to Wake Word Detection** → After response completion
+3. **Audio Device Selection** → Chooses user-selected device or auto-detects Reachy device
+4. **Continuous Monitoring** → Audio stream processed in 80ms chunks
+5. **Wake Word Detected** → Score exceeds threshold
+6. **Processing State Set** → `is_processing = True` (prevents re-triggering)
+7. **Visual Feedback** → Typing indicator shown in chat UI
+8. **Listen for Command** → 5 seconds (configurable) to speak command
+9. **Process Speech** → STT → LLM → TTS pipeline (is_processing stays True)
+10. **TTS Playback Completes** → `is_processing = False`
+11. **Cooldown Period** → 2-second delay prevents immediate re-trigger
+12. **Return to Wake Word Detection** → After cooldown + response completion
 
 ### State Machine
 
@@ -129,13 +133,20 @@ Wake word detection has been successfully integrated into the Reachy Tracking & 
 ## Configuration Options
 
 ### Wake Words
-- **hey_jarvis** (Default) - "Hey Jarvis"
-- **alexa** - "Alexa" 
+
+**Custom Models** (trained for Reachy):
+- **hay_ree_chee** - "Hay Reachy"
+- **hey_ree_shee** - "Hey Reachy"
+- **oh_kay_computer** - "Okay Computer" (Default)
+
+**Built-in Models**:
+- **hey_jarvis** - "Hey Jarvis"
+- **alexa** - "Alexa"
 - **hey_mycroft** - "Hey Mycroft"
 - **hey_rhasspy** - "Hey Rhasspy"
 
 ### Sensitivity (Threshold)
-- **0.1-0.3**: Very sensitive (more false triggers)
+- **0.001-0.3**: Very sensitive (more false triggers)
 - **0.4-0.6**: Balanced (recommended: 0.5)
 - **0.7-0.9**: Very selective (may miss wake word)
 
@@ -178,12 +189,43 @@ Wake word detection has been successfully integrated into the Reachy Tracking & 
 
 ## Files Modified
 
-1. `voice_assistant.py` - Core wake word detection logic
-2. `main.py` - API endpoints for configuration
-3. `static/index.html` - Dashboard UI controls
+1. `voice_assistant.py` - Core wake word detection logic + custom model support + audio device selection + processing state control + cooldown mechanism
+2. `main.py` - API endpoints for configuration + audio device enumeration + settings persistence
+3. `static/index.html` - Dashboard UI controls + Hold to Talk button with dynamic wake word display
 4. `requirements.txt` - Added openwakeword dependency
 5. `VOICE_ASSISTANT.md` - Comprehensive documentation
 6. `PLANNED_FEATURES.md` - Marked as completed
+
+## Recent Enhancements (December 31, 2025)
+
+### Custom Wake Word Models
+- Added support for custom-trained wake words (Hay Reachy, Hey Reachy, Okay Computer)
+- Models stored in `models/openwakeword/` directory
+- Automatic detection and loading of custom `.onnx` files
+
+### Audio Device Selection
+- Cross-platform audio device enumeration
+- User-selectable microphone input
+- Auto-detection of Reachy Mini Audio device
+- Settings persistence across restarts
+
+### Processing State Management
+- `is_processing` flag prevents wake word detection during response
+- Stays True through entire pipeline: transcription → LLM → TTS preparation → TTS playback
+- Cleared only after audio playback completes
+- Prevents multiple simultaneous triggers
+
+### Cooldown Mechanism
+- 2-second cooldown after response completion
+- `_last_response_time` timestamp tracking
+- Prevents immediate re-trigger of wake word
+- Smoother user experience
+
+### UI Improvements
+- Hold to Talk button shows current wake word ("Hold to Talk or Say \"Okay Computer\"")
+- Dynamic wake word display updates when selection changes
+- Typing indicator synchronized with `is_processing` state
+- Backend status info in Settings (Python version, robot connection, voice status)
 
 ## Files Created
 

@@ -164,10 +164,19 @@ curl -X POST http://localhost:8082/api/voice/wake-word/configure \
 ```
 
 ### Available Wake Words
-- **alexa** - "Alexa" (most widely tested)
-- **hey_jarvis** - "Hey Jarvis" (default, Iron Man reference)
+
+**Custom Models** (trained specifically for Reachy):
+- **hay_ree_chee** - "Hay Reachy" (optimized pronunciation)
+- **hey_ree_shee** - "Hey Reachy" (alternative pronunciation)
+- **oh_kay_computer** - "Okay Computer" (pop culture reference)
+
+**Built-in Models** (openw akeword defaults):
+- **hey_jarvis** - "Hey Jarvis" (Iron Man reference)
+- **alexa** - "Alexa" (Amazon)
 - **hey_mycroft** - "Hey Mycroft" (Mycroft AI)
 - **hey_rhasspy** - "Hey Rhasspy" (Rhasspy voice assistant)
+
+**Custom Model Location**: Place `.onnx` files in `models/openwakeword/` directory for automatic detection.
 
 ### Usage Flow
 
@@ -181,11 +190,37 @@ curl -X POST http://localhost:8082/api/voice/wake-word/configure \
 ### Tuning Sensitivity
 
 **Threshold Values:**
-- **0.1-0.3**: Very sensitive (more false triggers in noisy environments)
+- **0.001-0.3**: Very sensitive (more false triggers in noisy environments)
 - **0.4-0.6**: Balanced (recommended for most use cases)
 - **0.7-0.9**: Very selective (may miss wake word if not spoken clearly)
 
 **Default**: 0.5
+
+### Audio Device Selection
+
+Choose which microphone to use for wake word detection:
+
+**Via Dashboard:**
+1. Settings → Voice Settings tab
+2. Select audio input device from dropdown
+3. Devices are auto-detected with Reachy Mini Audio prioritized
+4. Save settings to persist across restarts
+
+**Via API:**
+```bash
+curl http://localhost:8082/api/voice/audio-devices
+```
+
+**Device Priority:**
+1. User-selected device (if configured)
+2. Reachy device (auto-detected: "Reachy", "Echo", "Speakerphone")
+3. System default device
+4. First available input device
+
+**Supported Platforms:**
+- Windows: DirectSound, WASAPI, MME
+- macOS: Core Audio
+- Linux: ALSA, PulseAudio, JACK
 
 **Tips:**
 - Start with default (0.5) and adjust based on your environment

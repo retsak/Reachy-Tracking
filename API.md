@@ -26,7 +26,7 @@ Returns MJPEG video stream with annotated detections.
 
 ### GET /api/status
 
-Get current system status and telemetry.
+Get current system status, telemetry, and backend information.
 
 **Response**:
 
@@ -35,17 +35,28 @@ Get current system status and telemetry.
   "status": "Tracking ID 3 (face)",
   "paused": false,
   "wiggle_enabled": true,
-  "position": {
-    "pitch": 0.0,
-    "yaw": 0.0,
-    "roll": 0.0,
+  "backend": {
+    "python_version": "3.12.12",
+    "robot_connected": true,
+    "voice_enabled": true
+  },
+  "current_target_id": 3,
+  "current_target": {
+    "id": 3,
+    "label": "face",
+    "score": 320
+  },
+  "candidates": [
+    {"id": 3, "label": "face", "score": 320}
+  ],
+  "volume": 50,
+  "pose": {
+    "head_yaw": 0.0,
+    "head_pitch": 0.0,
+    "head_roll": 0.0,
     "body_yaw": 0.0,
     "antenna_left": 0.0,
     "antenna_right": 0.0
-  },
-  "tracking": {
-    "current_target_id": 3,
-    "total_objects": 5
   }
 }
 ```
@@ -309,6 +320,78 @@ Stop voice listening.
 {
   "status": "ok",
   "listening": false
+}
+```
+
+### GET /api/voice/audio-devices
+
+Get list of available audio input devices.
+
+**Response**:
+
+```json
+{
+  "status": "ok",
+  "devices": [
+    {
+      "id": 14,
+      "name": "Headset Microphone (Plantronics BT600)",
+      "channels": 1,
+      "is_default": false,
+      "is_selected": true
+    }
+  ],
+  "selected_device_id": 14,
+  "selected_device_name": "Headset Microphone (Plantronics BT600)"
+}
+```
+
+### GET /api/voice/processing
+
+Get current voice processing state (detecting wake word, listening, transcribing, generating response).
+
+**Response**:
+
+```json
+{
+  "is_processing": false
+}
+```
+
+### GET /api/voice/transcript
+
+Get last transcribed speech text (polling endpoint for chat UI).
+
+**Response**:
+
+```json
+{
+  "transcript": "Hello Reachy"
+}
+```
+
+### GET /api/voice/response
+
+Get last AI response text (polling endpoint for chat UI).
+
+**Response**:
+
+```json
+{
+  "response": "Hello! How can I help you?"
+}
+```
+
+### POST /api/voice/listen_now
+
+Trigger manual voice listening (Hold to Talk button).
+
+**Response**:
+
+```json
+{
+  "status": "ok",
+  "message": "Listening for speech..."
 }
 ```
 

@@ -296,9 +296,13 @@ The voice assistant includes hands-free activation using wake word detection:
 
 **Features:**
 - 🎤 **Hands-Free**: Say the wake word to activate (no button press needed)
-- 🔄 **Multiple Options**: Choose from Hey Jarvis (default), Alexa, Hey Mycroft, Hey Rhasspy
-- ⚙️ **Configurable**: Adjust sensitivity threshold (0.1-0.9) and listening timeout (3-15s)
+- 🔄 **Multiple Options**: Choose from 7 wake words:
+  - **Custom Models** (trained for Reachy): Hay Reachy, Hey Reachy, Okay Computer
+  - **Built-in Models**: Hey Jarvis, Alexa, Hey Mycroft, Hey Rhasspy
+- 🎚️ **Audio Device Selection**: Choose which microphone to use for wake word detection
+- ⚙️ **Configurable**: Adjust sensitivity threshold (0.001-0.9) and listening timeout (3-15s)
 - 💻 **Efficient**: CPU-friendly ONNX models with <100ms detection latency
+- 🔇 **Smart Processing Control**: Wake word detection paused during response processing to prevent false triggers
 
 **Configuration:**
 1. Dashboard → Settings → Voice Settings tab
