@@ -111,8 +111,10 @@ Rules:
         self._pc_audio_queue = queue.Queue()
         self._pc_stream = None
         
-        # Audio device selection
-        self.audio_device_id = None  # None = use default/auto-detect
+        # Audio device selection for wake word detection
+        # Options: "sdk" (default, lowest latency) or device_id (0, 1, 2, etc.)
+        self.audio_input_source = "sdk"  # "sdk" or numeric device_id
+        self.audio_device_id = None  # Numeric device ID if using sounddevice
         self.audio_device_name = None  # Human-readable device name
         
         logger.info("VoiceAssistant initialized")
@@ -506,10 +508,19 @@ Rules:
             return None
     
     def get_available_audio_devices(self):
-        """Get list of available audio input devices."""
+        """Get list of available audio input devices, including Reachy SDK option."""
         try:
+            # Always include Reachy SDK as first option (lowest latency)
+            available = [{
+                'id': 'sdk',
+                'name': 'Reachy SDK (Recommended - Lowest Latency)',
+                'channels': 2,
+                'is_default': False,
+                'is_selected': self.audio_input_source == "sdk"
+            }]
+            
+            # Add all available sounddevice input devices
             devices = sd.query_devices()
-            available = []
             for i, device in enumerate(devices):
                 if device['max_input_channels'] > 0:
                     available.append({
@@ -517,25 +528,40 @@ Rules:
                         'name': device['name'],
                         'channels': device['max_input_channels'],
                         'is_default': i == sd.default.device[0],
-                        'is_selected': i == self.audio_device_id
+                        'is_selected': self.audio_input_source == "device" and i == self.audio_device_id
                     })
             return available
         except Exception as e:
             logger.error(f"Error querying audio devices: {e}")
             return []
     
-    def set_audio_device(self, device_id):
-        """Set the audio device to use for wake word detection."""
+    def set_audio_device(self, device_id_or_source):
+        """Set the audio input source for wake word detection.
+        
+        Args:
+            device_id_or_source: Either "sdk" (use Reachy SDK, lowest latency) or numeric device ID (use sounddevice)
+        """
         try:
-            devices = sd.query_devices()
-            if device_id < len(devices) and devices[device_id]['max_input_channels'] > 0:
-                self.audio_device_id = device_id
-                self.audio_device_name = devices[device_id]['name']
-                logger.info(f"✓ Audio device set to {device_id}: {self.audio_device_name}")
+            if device_id_or_source == "sdk" or device_id_or_source == -1:
+                # Use Reachy SDK microphone (lowest latency, default)
+                self.audio_input_source = "sdk"
+                self.audio_device_id = None
+                self.audio_device_name = "Reachy SDK (Recommended - Lowest Latency)"
+                logger.info(f"✓ Audio input source set to Reachy SDK")
                 return True
             else:
-                logger.error(f"Invalid audio device ID: {device_id}")
-                return False
+                # Use sounddevice with specific device ID
+                device_id = int(device_id_or_source)
+                devices = sd.query_devices()
+                if device_id < len(devices) and devices[device_id]['max_input_channels'] > 0:
+                    self.audio_input_source = "device"
+                    self.audio_device_id = device_id
+                    self.audio_device_name = devices[device_id]['name']
+                    logger.info(f"✓ Audio input source set to device {device_id}: {self.audio_device_name}")
+                    return True
+                else:
+                    logger.error(f"Invalid audio device ID: {device_id}")
+                    return False
         except Exception as e:
             logger.error(f"Error setting audio device: {e}")
             return False
@@ -601,13 +627,64 @@ Rules:
             else:
                 logger.info("Wake word detection disabled - listening for all speech")
             
+            # Determine which audio source to use
+            use_sdk = self.audio_input_source == "sdk"
+            use_sounddevice = self.audio_input_source == "device" and self.audio_device_id is not None
+            
+            if use_sdk:
+                logger.info(f"🎤 Using Reachy SDK microphone (lowest latency)")
+                try:
+                    logger.info("Attempting to start microphone recording...")
+                    mini.start_recording()
+                    logger.info("✓ Microphone recording active (Reachy SDK)")
+                except Exception as e:
+                    logger.error(f"Failed to start Reachy SDK recording: {e}")
+                    self.running = False
+                    return
+            elif use_sounddevice:
+                logger.info(f"🎤 Using sounddevice input from device {self.audio_device_id}: {self.audio_device_name}")
+                # Will start sounddevice stream below
+            else:
+                # Fallback to SDK if no valid device selected
+                logger.warning("No audio device selected, using Reachy SDK")
+                use_sdk = True
+                self.audio_input_source = "sdk"
+                try:
+                    mini.start_recording()
+                    logger.info("✓ Microphone recording active (Reachy SDK)")
+                except Exception as e:
+                    logger.error(f"Failed to start Reachy SDK recording: {e}")
+                    self.running = False
+                    return
+            
             try:
-                logger.info("Attempting to start microphone recording...")
-                mini.start_recording()
-                logger.info("✓ Microphone recording active (Reachy robot)")
+                # For sounddevice mode, set up the stream
+                pc_stream = None
+                pc_audio_queue = queue.Queue() if use_sounddevice else None
                 
-                # Use Reachy SDK microphone directly for lowest latency on wake word detection
-                # (PC microphone fallback disabled - Reachy mic is the primary source)
+                if use_sounddevice:
+                    def audio_callback(indata, frames, time_info, status):
+                        if status:
+                            logger.warning(f"Audio status: {status}")
+                        audio = indata[:, 0] if indata.ndim > 1 else indata
+                        pc_audio_queue.put(audio.copy())
+                    
+                    try:
+                        pc_stream = sd.InputStream(
+                            device=self.audio_device_id,
+                            samplerate=self.sample_rate,
+                            channels=1,
+                            dtype='float32',
+                            blocksize=self.chunk_size,
+                            callback=audio_callback,
+                            latency='low'
+                        )
+                        pc_stream.start()
+                        logger.info("✓ Sounddevice stream active")
+                    except Exception as e:
+                        logger.error(f"Failed to start sounddevice: {e}")
+                        self.running = False
+                        return
                 
                 vad_buffer = []
                 wake_word_buffer = []
@@ -627,8 +704,15 @@ Rules:
                             speech_detected = False
                             self._manual_listen_requested = False  # Reset flag
                         
-                        # Get audio chunk from microphone
-                        chunk = mini.get_audio_sample()
+                        # Get audio chunk from selected source
+                        if use_sdk:
+                            chunk = mini.get_audio_sample()
+                        else:  # use_sounddevice
+                            try:
+                                chunk = pc_audio_queue.get(timeout=0.1)
+                            except queue.Empty:
+                                time.sleep(0.01)
+                                continue
                         
                         if chunk is None or len(chunk) == 0:
                             time.sleep(0.01)
@@ -771,29 +855,59 @@ Rules:
                         
                         # Speech detection (only when listening for command)
                         if listening_for_command:
-                            # For MANUAL trigger (push-to-talk): capture ALL audio, no VAD filtering
-                            # User is actively holding button, so we know they're speaking
-                            vad_buffer.append(chunk)
-                            speech_detected = True
+                            # Capture audio for speech detection (always, no VAD filtering)
+                            # User is actively listening after wake word, so record everything
+                            energy = np.sqrt(np.mean(chunk ** 2))
+                            # More sensitive threshold for device audio which may be quiet
+                            is_speech = energy > 0.001  # 100x more sensitive than 0.01
+                            
+                            if is_speech:
+                                vad_buffer.append(chunk)
+                                speech_detected = True
+                                silence_chunks = 0
+                            elif speech_detected:
+                                vad_buffer.append(chunk)
+                                silence_chunks += 1
+                                
+                                if silence_chunks >= max_silence_chunks and len(vad_buffer) > 10:
+                                    audio_data = np.concatenate(vad_buffer)
+                                    self.text_queue.put(audio_data)
+                                    logger.info(f"Speech segment captured ({len(audio_data)} samples)")
+                                    
+                                    vad_buffer = []
+                                    speech_detected = False
+                                    silence_chunks = 0
+                                    if wake_word_model:
+                                        listening_for_command = False
+                                        self._wake_word_detected_time = None
+                                        wake_word_buffer = []
+                                        logger.info("🔊 Listening for wake word...")
                     
                     except Exception as e:
                         logger.error(f"Audio capture error: {e}")
                         time.sleep(0.1)
                 
-                # Stop recording but don't close the MediaManager
+                # Stop recording from selected source
                 try:
-                    mini.stop_recording()
-                    logger.info("Microphone recording stopped")
+                    if use_sdk and 'mini' in locals():
+                        mini.stop_recording()
+                        logger.info("Reachy SDK recording stopped")
+                    if use_sounddevice and pc_stream:
+                        pc_stream.stop()
+                        pc_stream.close()
+                        logger.info("Sounddevice stream stopped")
                 except Exception as e:
-                    logger.warning(f"Error stopping recording: {e}")
+                    logger.warning(f"Error stopping audio capture: {e}")
             except Exception as e:
                 logger.error(f"❌ Microphone setup error: {e}", exc_info=True)
                 self.running = False
             
-            # If PC microphone mode was activated, continue with PC mic
-            if self._use_pc_microphone and self._pc_stream and self.running:
-                logger.info("🔄 Continuing with PC microphone...")
-                self._pc_microphone_loop(wake_word_model)
+            # Cleanup
+            if pc_stream:
+                try:
+                    pc_stream.close()
+                except:
+                    pass
         
         except Exception as e:
             logger.error(f"❌ Listen loop fatal error: {e}", exc_info=True)
