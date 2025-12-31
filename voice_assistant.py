@@ -606,9 +606,8 @@ Rules:
                 mini.start_recording()
                 logger.info("✓ Microphone recording active (Reachy robot)")
                 
-                # Test for silence - if SDK returns zeros, switch to PC microphone
-                silence_test_chunks = 0
-                max_test_chunks = 50  # Test first ~1.5 seconds
+                # Use Reachy SDK microphone directly for lowest latency on wake word detection
+                # (PC microphone fallback disabled - Reachy mic is the primary source)
                 
                 vad_buffer = []
                 wake_word_buffer = []
@@ -639,16 +638,6 @@ Rules:
                         if chunk.ndim > 1:
                             chunk = np.mean(chunk, axis=1).astype(chunk.dtype)
                         
-                        # Test for silence during initial startup
-                        if silence_test_chunks < max_test_chunks:
-                            silence_test_chunks += 1
-                            if np.abs(chunk).max() < 0.001:  # Essentially silent
-                                if silence_test_chunks >= max_test_chunks:
-                                    logger.warning("⚠️ Reachy API microphone not accessible - switching to PC microphone")
-                                    self._use_pc_microphone = True
-                                    self._start_pc_microphone()
-                                    break  # Exit SDK loop and restart with PC mic
-
                         # Compute audio level telemetry (normalized RMS and dB)
                         try:
                             amplitude = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
