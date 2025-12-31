@@ -2,6 +2,9 @@
 
 An autonomous tracking and control system for the Reachy robot with integrated voice assistant, emotion system, and visual themes. Detects and follows objects (faces, people, cats) using a hybrid tracking approach (YOLOv8 + Object Tracking), provides natural voice interaction, and features a customizable web dashboard.
 
+![Reachy Tracking Dashboard](documentation_images/SampleUI.png)
+*Web dashboard showing live video feed, chat interface, manual controls, and emotion palette*
+
 ## Features
 
 ### 🎯 Autonomous Tracking

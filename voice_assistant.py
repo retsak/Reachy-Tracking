@@ -11,6 +11,7 @@ import re
 import numpy as np
 import soundfile as sf
 import sounddevice as sd
+from scipy import signal
 from typing import Optional, Callable
 from pathlib import Path
 from llm_config import get_llm_config_manager
@@ -1171,30 +1172,38 @@ Rules:
                 logger.info(f"🔊 Audio before processing - RMS: {rms_before:.4f}, Max: {max_before:.4f}")
                 logger.info(f"🔊 Audio shape: {audio_data.shape}, dtype: {audio_data.dtype}, samples: {len(audio_data)}")
             
-            # Try to detect actual SDK sample rate
-            # Reachy SDK typically captures at 48kHz (not 16kHz as assumed)
-            sdk_sample_rate = 48000
-            if self.debug_audio_enabled:
-                logger.info(f"🔊 Assuming SDK capture rate: {sdk_sample_rate}Hz")
+            # Determine source sample rate based on audio input source
+            # SDK: 48kHz (needs resampling to 16kHz)
+            # Sounddevice: already resampled to 16kHz in callback
+            if self.audio_input_source == "sdk":
+                source_sample_rate = 48000
+                needs_resampling = True
+            else:
+                # Sounddevice audio is already at 16kHz
+                source_sample_rate = 16000
+                needs_resampling = False
             
-            # Save raw audio at SDK's native rate (only if debug enabled)
+            if self.debug_audio_enabled:
+                logger.info(f"🔊 Source: {self.audio_input_source}, rate: {source_sample_rate}Hz, needs_resampling: {needs_resampling}")
+            
+            # Save raw audio at source's native rate (only if debug enabled)
             if self.debug_audio_enabled:
                 try:
                     import scipy.io.wavfile as wavfile
                     raw_path = "debug_audio_raw.wav"
-                    # Save at actual SDK rate so playback speed is correct
-                    wavfile.write(raw_path, sdk_sample_rate, (audio_data * 32767).astype(np.int16))
-                    logger.info(f"💾 Saved RAW audio to {raw_path} at {sdk_sample_rate}Hz")
+                    # Save at actual source rate so playback speed is correct
+                    wavfile.write(raw_path, source_sample_rate, (audio_data * 32767).astype(np.int16))
+                    logger.info(f"💾 Saved RAW audio to {raw_path} at {source_sample_rate}Hz")
                 except Exception as e:
                     logger.debug(f"Could not save raw audio: {e}")
             
-            # Resample to 16kHz for Whisper (Whisper requirement)
-            if sdk_sample_rate != 16000:
+            # Resample to 16kHz for Whisper if needed
+            if needs_resampling and source_sample_rate != 16000:
                 from scipy import signal
-                resampled_length = int(len(audio_data) * 16000 / sdk_sample_rate)
+                resampled_length = int(len(audio_data) * 16000 / source_sample_rate)
                 audio_data = signal.resample(audio_data, resampled_length)
                 if self.debug_audio_enabled:
-                    logger.info(f"🔊 Resampled audio from {sdk_sample_rate}Hz to 16kHz ({resampled_length} samples)")
+                    logger.info(f"🔊 Resampled audio from {source_sample_rate}Hz to 16kHz ({resampled_length} samples)")
             
             # Normalize based on RMS (not peak) to target 0.30 RMS for Whisper
             # Aggressive amplification for quiet Reachy microphone
@@ -1639,11 +1648,12 @@ Rules:
                 self.robot._is_speaking = True
                 # Pause tracking during speech to prevent fighting with speech motion
                 self.robot._pause_tracking = True
-                # Quick antenna wiggle only (no head movement to avoid fighting with tracking)
+                # Show peaceful emotion to acknowledge - no movement
                 try:
-                    self.robot.set_pose(antenna_left=100, antenna_right=-100, duration=0.3)
+                    from robot_controller import EMOTIONS
+                    self.robot.show_emotion(EMOTIONS['peaceful'])
                 except Exception as e:
-                    logger.debug(f"Could not move antennas: {e}")
+                    logger.debug(f"Could not show emotion: {e}")
             
             # Generate and play each chunk sequentially
             for chunk_idx, chunk in enumerate(chunks):

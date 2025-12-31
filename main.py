@@ -56,7 +56,7 @@ async def log_requests_middleware(request, call_next):
     response = await call_next(request)
     
     # Skip logging for polling endpoints unless verbose logging is enabled
-    quiet_endpoints = ["/status", "/api/voice/level", "/api/voice/status", "/api/voice/transcript"]
+    quiet_endpoints = ["/status", "/api/voice/level", "/api/voice/status", "/api/voice/transcript", "/api/voice/response"]
     if request.url.path in quiet_endpoints and not VERBOSE_LOGGING:
         return response
     
@@ -868,9 +868,34 @@ def enable_voice():
                 voice_assistant.wake_word = saved_wake_word_config.get("wake_word", "hey_jarvis")
                 voice_assistant.wake_word_threshold = saved_wake_word_config.get("threshold", 0.5)
                 voice_assistant.wake_word_timeout = saved_wake_word_config.get("timeout", 5.0)
-                audio_device_id = saved_wake_word_config.get("audio_device_id")
-                if audio_device_id is not None:
-                    voice_assistant.set_audio_device(audio_device_id)
+                
+                # Restore audio input source preference with validation
+                audio_input_source = saved_wake_word_config.get("audio_input_source")
+                if audio_input_source:
+                    if audio_input_source == "sdk":
+                        # SDK is always available
+                        voice_assistant.set_audio_device("sdk")
+                        logger.info("Restored audio input: Reachy SDK")
+                    else:
+                        # Validate that the saved device is still available
+                        audio_device_id = saved_wake_word_config.get("audio_device_id")
+                        if audio_device_id is not None:
+                            # Try to set the device - will return False if device no longer exists
+                            if voice_assistant.set_audio_device(audio_device_id):
+                                logger.info(f"Restored audio input device: {audio_device_id}")
+                            else:
+                                # Device no longer available, fall back to SDK
+                                logger.warning(f"Saved audio device {audio_device_id} no longer available, reverting to SDK")
+                                voice_assistant.set_audio_device("sdk")
+                                # Update config to reflect the fallback
+                                saved_wake_word_config["audio_input_source"] = "sdk"
+                                saved_wake_word_config["audio_device_id"] = None
+                                _save_wake_word_settings(saved_wake_word_config)
+                else:
+                    # No audio source saved, default to SDK
+                    voice_assistant.set_audio_device("sdk")
+                    logger.info("No saved audio input, using SDK default")
+                
                 logger.info(f"Applied saved wake word settings: {saved_wake_word_config}")
                 # Preload wake word model so status shows loaded on startup
                 if voice_assistant.wake_word_enabled:
@@ -1077,11 +1102,20 @@ async def configure_wake_word(data: dict):
             else:
                 return {"status": "error", "message": "Timeout must be positive"}
         if "audio_device_id" in data:
-            device_id = int(data["audio_device_id"])
-            if voice_assistant.set_audio_device(device_id):
-                logger.info(f"Audio device updated to {device_id}")
+            device_selection = data["audio_device_id"]
+            # Handle both "sdk" string and numeric device IDs
+            if device_selection == "sdk":
+                device_id_to_set = "sdk"
             else:
-                return {"status": "error", "message": f"Invalid audio device ID: {device_id}"}
+                try:
+                    device_id_to_set = int(device_selection)
+                except (ValueError, TypeError):
+                    return {"status": "error", "message": f"Invalid audio device ID: {device_selection}"}
+            
+            if voice_assistant.set_audio_device(device_id_to_set):
+                logger.info(f"Audio input source updated to {device_id_to_set}")
+            else:
+                return {"status": "error", "message": f"Invalid audio device selection: {device_id_to_set}"}
         
         # Save settings to file
         config = {
@@ -1089,7 +1123,9 @@ async def configure_wake_word(data: dict):
             "wake_word": voice_assistant.wake_word,
             "threshold": voice_assistant.wake_word_threshold,
             "timeout": voice_assistant.wake_word_timeout,
-            "audio_device_id": voice_assistant.audio_device_id
+            "audio_input_source": voice_assistant.audio_input_source,
+            "audio_device_id": voice_assistant.audio_device_id,
+            "audio_device_name": voice_assistant.audio_device_name
         }
         _save_wake_word_settings(config)
         
@@ -1114,6 +1150,7 @@ async def get_audio_devices():
         return {
             "status": "ok",
             "devices": devices,
+            "selected_audio_input_source": voice_assistant.audio_input_source,
             "selected_device_id": voice_assistant.audio_device_id,
             "selected_device_name": voice_assistant.audio_device_name
         }
@@ -1149,6 +1186,7 @@ async def get_wake_word_status():
                     "wake_word": saved_config.get("wake_word", "hey_jarvis"),
                     "threshold": saved_config.get("threshold", 0.5),
                     "timeout": saved_config.get("timeout", 5.0),
+                    "audio_input_source": saved_config.get("audio_input_source", "sdk"),
                     "audio_device_id": saved_config.get("audio_device_id"),
                     "available_models": valid_models,
                     "model_loaded": False
@@ -1159,6 +1197,7 @@ async def get_wake_word_status():
                     "wake_word": "hey_jarvis",
                     "threshold": 0.5,
                     "timeout": 5.0,
+                    "audio_input_source": "sdk",
                     "audio_device_id": None,
                     "available_models": valid_models,
                     "model_loaded": False
@@ -1169,6 +1208,7 @@ async def get_wake_word_status():
             "wake_word": voice_assistant.wake_word,
             "threshold": voice_assistant.wake_word_threshold,
             "timeout": voice_assistant.wake_word_timeout,
+            "audio_input_source": voice_assistant.audio_input_source,
             "audio_device_id": voice_assistant.audio_device_id,
             "audio_device_name": voice_assistant.audio_device_name,
             "available_models": valid_models,
@@ -1225,6 +1265,22 @@ async def get_latest_transcript():
         return {"text": "", "has_new": False}
     except Exception as e:
         logger.error(f"Transcript fetch error: {e}", exc_info=True)
+        return {"text": "", "has_new": False}
+
+@app.get("/api/voice/response")
+async def get_latest_response():
+    """Get the latest assistant response"""
+    global VOICE_STATE
+    try:
+        text = VOICE_STATE.get("last_response", "")
+        if text:
+            # Return and clear so it's only shown once
+            last = text
+            VOICE_STATE["last_response"] = ""
+            return {"text": last, "has_new": True}
+        return {"text": "", "has_new": False}
+    except Exception as e:
+        logger.error(f"Response fetch error: {e}", exc_info=True)
         return {"text": "", "has_new": False}
 
 

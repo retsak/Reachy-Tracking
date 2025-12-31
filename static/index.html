@@ -615,7 +615,20 @@
                 const res = await fetch('/api/voice/transcript');
                 const data = await res.json();
                 if (data.has_new && data.text) {
-                    addMsg('user', `🎙️ You: ${data.text}`);
+                    addMsg('user', data.text);
+                }
+            } catch (e) {
+                // Silently fail
+            }
+        }, 500);
+
+        // Poll for assistant responses and display in chat
+        const responsePoller = setInterval(async () => {
+            try {
+                const res = await fetch('/api/voice/response');
+                const data = await res.json();
+                if (data.has_new && data.text) {
+                    addMsg('assistant', data.text);
                 }
             } catch (e) {
                 // Silently fail
