@@ -60,8 +60,21 @@ class VoiceAssistant:
         self._llm_tokenizer = None
         self._piper_model = None
         self._piper_model_path = None
-        self.model_info = {"whisper": None, "llm": None, "piper": None}
+        self._wake_word_model = None
+        self.model_info = {"whisper": None, "llm": None, "piper": None, "wake_word": None}
         self.init_error = None
+
+        # Telemetry
+        self.last_rms = 0.0
+        self.last_db = -120.0
+        
+        # Wake word configuration
+        self.wake_word_enabled = True  # Enable wake word detection by default
+        self.wake_word = "hey_jarvis"  # Default wake word (options: alexa, hey_jarvis, hey_mycroft, hey_rhasspy)
+        self.wake_word_threshold = 0.5  # Detection threshold (0.0-1.0)
+        self.wake_word_timeout = 5.0  # Seconds to listen after wake word detected
+        self._wake_word_detected_time = None
+        self._wake_word_buffer_size = 1280  # 80ms at 16kHz for wake word detection
         
         # Conversation context
         self.conversation_history = []
@@ -305,6 +318,39 @@ Rules:
                 raise
         return self._llm_model, self._llm_tokenizer
     
+    def _load_wake_word_model(self):
+        """Load wake word detection model"""
+        if self._wake_word_model is None and self.wake_word_enabled:
+            try:
+                from openwakeword.model import Model as WakeWordModel
+                from openwakeword import utils as oww_utils
+                
+                logger.info(f"Loading wake word model: {self.wake_word}")
+                
+                # Download models if not already present
+                try:
+                    oww_utils.download_models()
+                except Exception as e:
+                    logger.warning(f"Failed to download wake word models (may already exist): {e}")
+                
+                # Load the specified wake word model
+                self._wake_word_model = WakeWordModel(
+                    wakeword_models=[self.wake_word],
+                    inference_framework='onnx'
+                )
+                
+                logger.info(f"Wake word model loaded: {list(self._wake_word_model.models.keys())}")
+                self.model_info["wake_word"] = {
+                    "model": self.wake_word,
+                    "threshold": self.wake_word_threshold,
+                    "timeout": self.wake_word_timeout
+                }
+            except Exception as e:
+                logger.error(f"Failed to load wake word model: {e}", exc_info=True)
+                logger.warning("Wake word detection will be disabled")
+                self.wake_word_enabled = False
+        return self._wake_word_model
+    
     def _load_piper(self):
         """Load Piper TTS model"""
         if self._piper_model is None:
@@ -352,24 +398,41 @@ Rules:
         logger.info("Voice assistant stopped")
     
     def _listen_loop(self):
-        """Main listening loop - captures audio from microphone"""
+        """Main listening loop - captures audio from microphone with optional wake word detection"""
         try:
-            if not self.robot or not hasattr(self.robot, 'mini'):
+            if not self.robot or not hasattr(self.robot, 'sdk_mini'):
                 logger.error("Robot controller or MediaManager not available for voice input")
                 self.running = False
                 return
             
             logger.info("Starting microphone capture (Reachy built-in mic)...")
-            mini = self.robot.mini  # Reuse robot's MediaManager
+            mini = self.robot.sdk_mini  # Reuse robot's MediaManager
+            
+            # Load wake word model if enabled
+            wake_word_model = None
+            if self.wake_word_enabled:
+                try:
+                    wake_word_model = self._load_wake_word_model()
+                    if wake_word_model:
+                        logger.info(f"✓ Wake word detection enabled: '{self.wake_word}' (threshold: {self.wake_word_threshold})")
+                    else:
+                        logger.warning("Wake word model failed to load, using manual activation only")
+                except Exception as e:
+                    logger.error(f"Wake word setup error: {e}")
+                    wake_word_model = None
+            else:
+                logger.info("Wake word detection disabled - listening for all speech")
             
             try:
                 mini.media.start_recording()
                 logger.info("Microphone recording active (Reachy robot)")
                 
                 vad_buffer = []
+                wake_word_buffer = []
                 speech_detected = False
                 silence_chunks = 0
                 max_silence_chunks = 30  # ~0.9s of silence to finalize
+                listening_for_command = not self.wake_word_enabled  # If wake word disabled, always listen
                 
                 while self.running:
                     try:
@@ -379,29 +442,94 @@ Rules:
                         if chunk is None or len(chunk) == 0:
                             time.sleep(0.01)
                             continue
+
+                        # Compute audio level telemetry (normalized RMS and dB)
+                        try:
+                            amplitude = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+                            norm = min(1.0, amplitude / 0.1)  # heuristic scale
+                            self.last_rms = norm
+                            self.last_db = 20 * np.log10(amplitude + 1e-6)
+                        except Exception:
+                            self.last_rms = 0.0
+                            self.last_db = -120.0
                         
-                        # Simple energy-based VAD
-                        energy = np.sqrt(np.mean(chunk ** 2))
-                        is_speech = energy > 0.01  # Threshold for speech detection
-                        
-                        if is_speech:
-                            vad_buffer.append(chunk)
-                            speech_detected = True
-                            silence_chunks = 0
-                        elif speech_detected:
-                            vad_buffer.append(chunk)
-                            silence_chunks += 1
+                        # Wake word detection (if enabled and not already listening)
+                        if wake_word_model and not listening_for_command:
+                            # Accumulate audio for wake word detection (needs 80ms chunks = 1280 samples at 16kHz)
+                            wake_word_buffer.append(chunk)
+                            wake_word_audio = np.concatenate(wake_word_buffer)
                             
-                            # If enough silence after speech, process buffer
-                            if silence_chunks >= max_silence_chunks and len(vad_buffer) > 10:
-                                audio_data = np.concatenate(vad_buffer)
-                                self.text_queue.put(audio_data)
-                                logger.info(f"Speech segment captured ({len(audio_data)} samples)")
+                            # Process in 80ms chunks
+                            if len(wake_word_audio) >= self._wake_word_buffer_size:
+                                # Take exactly 1280 samples for prediction
+                                detection_chunk = wake_word_audio[:self._wake_word_buffer_size].astype(np.int16)
+                                wake_word_buffer = [wake_word_audio[self._wake_word_buffer_size:]]
                                 
-                                # Reset
+                                # Run wake word detection
+                                try:
+                                    prediction = wake_word_model.predict(detection_chunk)
+                                    score = prediction.get(self.wake_word, 0.0)
+                                    
+                                    if score > self.wake_word_threshold:
+                                        logger.info(f"🎤 Wake word detected! (score: {score:.3f})")
+                                        listening_for_command = True
+                                        self._wake_word_detected_time = time.time()
+                                        vad_buffer = []  # Clear buffer to start fresh
+                                        speech_detected = False
+                                        
+                                        # Optional: play a beep or visual indication
+                                        if self.robot and hasattr(self.robot, 'trigger_emotion'):
+                                            threading.Thread(
+                                                target=self.robot.trigger_emotion,
+                                                args=("excited",),
+                                                daemon=True
+                                            ).start()
+                                except Exception as e:
+                                    logger.error(f"Wake word prediction error: {e}")
+                            
+                            # Skip speech detection when waiting for wake word
+                            continue
+                        
+                        # Check if wake word timeout expired
+                        if listening_for_command and self._wake_word_detected_time:
+                            elapsed = time.time() - self._wake_word_detected_time
+                            if elapsed > self.wake_word_timeout:
+                                logger.info(f"⏱️ Wake word timeout ({self.wake_word_timeout}s) - returning to wake word detection")
+                                listening_for_command = False
+                                self._wake_word_detected_time = None
                                 vad_buffer = []
                                 speech_detected = False
+                                continue
+                        
+                        # Speech detection (only when listening for command)
+                        if listening_for_command:
+                            # Simple energy-based VAD
+                            energy = np.sqrt(np.mean(chunk ** 2))
+                            is_speech = energy > 0.01  # Threshold for speech detection
+                            
+                            if is_speech:
+                                vad_buffer.append(chunk)
+                                speech_detected = True
                                 silence_chunks = 0
+                            elif speech_detected:
+                                vad_buffer.append(chunk)
+                                silence_chunks += 1
+                                
+                                # If enough silence after speech, process buffer
+                                if silence_chunks >= max_silence_chunks and len(vad_buffer) > 10:
+                                    audio_data = np.concatenate(vad_buffer)
+                                    self.text_queue.put(audio_data)
+                                    logger.info(f"Speech segment captured ({len(audio_data)} samples)")
+                                    
+                                    # Reset and return to wake word detection (if enabled)
+                                    vad_buffer = []
+                                    speech_detected = False
+                                    silence_chunks = 0
+                                    if wake_word_model:
+                                        listening_for_command = False
+                                        self._wake_word_detected_time = None
+                                        wake_word_buffer = []
+                                        logger.info("🔊 Listening for wake word...")
                     
                     except Exception as e:
                         logger.error(f"Audio capture error: {e}")

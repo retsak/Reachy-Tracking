@@ -7,10 +7,13 @@ import signal
 import sys
 import logging
 import json
+import subprocess
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
+import asyncio
 import numpy as np
 import webbrowser
 
@@ -27,6 +30,9 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 logger = logging.getLogger(__name__)
+
+# Suppress asyncio connection reset errors on Windows (harmless)
+logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 try:
     cv2.setUseOptimized(True)
@@ -49,11 +55,11 @@ async def log_requests_middleware(request, call_next):
     
     response = await call_next(request)
     
-    # Skip logging for /status unless verbose logging is enabled
-    if request.url.path == "/status" and not VERBOSE_LOGGING:
+    # Skip logging for /status and /api/voice/level unless verbose logging is enabled
+    if (request.url.path == "/status" or request.url.path == "/api/voice/level") and not VERBOSE_LOGGING:
         return response
     
-    # Log other requests (or /status when verbose)
+    # Log other requests (or telemetry endpoints when verbose)
     status_code = response.status_code
     method = request.method
     path = request.url.path
@@ -71,6 +77,7 @@ SERVER_STATE = {
     "paused": True, 
     "wiggle_enabled": False
 } # Default Paused, Wiggle OFF
+server_instance = None  # Global uvicorn server instance for controlled shutdown
 VERBOSE_LOGGING = False  # Control logging verbosity
 LATEST_CANDIDATES = []
 current_target_id = None
@@ -106,7 +113,31 @@ TUNING = {
     "recenter_timeout": 2.0
 }
 TUNING_FILE = ".tuning_config.json"
+WAKE_WORD_CONFIG_FILE = ".wake_word_config.json"
 JPEG_QUALITY = 70
+
+def _load_wake_word_settings():
+    """Load wake word settings from file if exists."""
+    if os.path.exists(WAKE_WORD_CONFIG_FILE):
+        try:
+            with open(WAKE_WORD_CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+                logger.info(f"Loaded wake word settings from {WAKE_WORD_CONFIG_FILE}")
+                return config
+        except Exception as e:
+            logger.warning(f"Failed to load wake word settings: {e}")
+    return None
+
+def _save_wake_word_settings(config):
+    """Save wake word settings to file."""
+    try:
+        with open(WAKE_WORD_CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+        logger.info(f"Saved wake word settings to {WAKE_WORD_CONFIG_FILE}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to save wake word settings: {e}")
+        return False
 
 def _load_tuning_settings():
     """Load tuning settings from file if exists."""
@@ -750,6 +781,49 @@ def manual_control(req: ManualControlRequest):
     )
     return {"status": "ok"}
 
+@app.post("/api/restart")
+def restart():
+    """Restart the application by spawning a fresh process and shutting down current server."""
+    global is_running, server_instance
+    logger.info("Restart requested, restarting application...")
+    is_running = False  # Stop loops
+
+    main_path = Path(__file__).resolve()
+    cwd = main_path.parent
+
+    def restart_proc():
+        try:
+            # Give response time to flush back to client
+            time.sleep(0.5)
+            
+            # Spawn new process BEFORE shutting down (so it can start while old one is exiting)
+            logger.info(f"Spawning new process: {sys.executable} {main_path}")
+            process = subprocess.Popen(
+                [sys.executable, str(main_path)],
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            logger.info(f"New process started with PID {process.pid}")
+            
+            # Now shutdown uvicorn server gracefully to release port
+            if server_instance:
+                logger.info("Shutting down server gracefully...")
+                server_instance.should_exit = True
+                time.sleep(1.5)  # Wait for shutdown
+            
+            # Force exit to ensure clean restart
+            logger.info("Exiting old process...")
+            os._exit(0)
+        except Exception as e:
+            logger.error(f"Failed to restart: {e}", exc_info=True)
+            os._exit(1)
+
+    threading.Thread(target=restart_proc, daemon=True).start()
+    return {"status": "ok", "message": "Restarting..."}
+
+    return {"status": "restarting", "message": "System restarting..."}
+
 @app.post("/api/shutdown")
 def shutdown():
     global is_running
@@ -783,6 +857,22 @@ def enable_voice():
     try:
         if voice_assistant is None:
             voice_assistant = get_assistant(robot)
+            
+            # Load saved wake word settings
+            saved_wake_word_config = _load_wake_word_settings()
+            if saved_wake_word_config:
+                voice_assistant.wake_word_enabled = saved_wake_word_config.get("enabled", True)
+                voice_assistant.wake_word = saved_wake_word_config.get("wake_word", "hey_jarvis")
+                voice_assistant.wake_word_threshold = saved_wake_word_config.get("threshold", 0.5)
+                voice_assistant.wake_word_timeout = saved_wake_word_config.get("timeout", 5.0)
+                logger.info(f"Applied saved wake word settings: {saved_wake_word_config}")
+                # Preload wake word model so status shows loaded on startup
+                if voice_assistant.wake_word_enabled:
+                    try:
+                        voice_assistant._load_wake_word_model()
+                        logger.info("Wake word model preloaded on enable")
+                    except Exception as e:
+                        logger.warning(f"Could not preload wake word model: {e}")
             
             # Setup callbacks
             def on_speech(text):
@@ -895,6 +985,115 @@ async def speak_text(data: dict):
     except Exception as e:
         logger.error(f"TTS error: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
+
+@app.post("/api/voice/wake-word/configure")
+async def configure_wake_word(data: dict):
+    """Configure wake word detection settings"""
+    global voice_assistant
+    
+    try:
+        if voice_assistant is None:
+            voice_assistant = get_assistant(robot)
+        
+        # Update settings
+        if "enabled" in data:
+            voice_assistant.wake_word_enabled = bool(data["enabled"])
+        if "wake_word" in data:
+            # Validate wake word model name
+            valid_models = ["alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy"]
+            if data["wake_word"] in valid_models:
+                voice_assistant.wake_word = data["wake_word"]
+                # Reset model to load new wake word
+                voice_assistant._wake_word_model = None
+            else:
+                return {"status": "error", "message": f"Invalid wake word. Valid options: {valid_models}"}
+        if "threshold" in data:
+            threshold = float(data["threshold"])
+            if 0.0 <= threshold <= 1.0:
+                voice_assistant.wake_word_threshold = threshold
+            else:
+                return {"status": "error", "message": "Threshold must be between 0.0 and 1.0"}
+        if "timeout" in data:
+            timeout = float(data["timeout"])
+            if timeout > 0:
+                voice_assistant.wake_word_timeout = timeout
+            else:
+                return {"status": "error", "message": "Timeout must be positive"}
+        
+        # Save settings to file
+        config = {
+            "enabled": voice_assistant.wake_word_enabled,
+            "wake_word": voice_assistant.wake_word,
+            "threshold": voice_assistant.wake_word_threshold,
+            "timeout": voice_assistant.wake_word_timeout
+        }
+        _save_wake_word_settings(config)
+        
+        return {
+            "status": "ok",
+            "config": config
+        }
+    except Exception as e:
+        logger.error(f"Wake word configuration error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/voice/wake-word/status")
+async def get_wake_word_status():
+    """Get current wake word detection configuration"""
+    global voice_assistant
+    
+    try:
+        # Load saved settings if available
+        saved_config = _load_wake_word_settings()
+        
+        if voice_assistant is None:
+            # Return saved settings or defaults
+            if saved_config:
+                return {
+                    "enabled": saved_config.get("enabled", True),
+                    "wake_word": saved_config.get("wake_word", "hey_jarvis"),
+                    "threshold": saved_config.get("threshold", 0.5),
+                    "timeout": saved_config.get("timeout", 5.0),
+                    "available_models": ["alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy"],
+                    "model_loaded": False
+                }
+            else:
+                return {
+                    "enabled": True,
+                    "wake_word": "hey_jarvis",
+                    "threshold": 0.5,
+                    "timeout": 5.0,
+                    "available_models": ["alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy"],
+                    "model_loaded": False
+                }
+        
+        return {
+            "enabled": voice_assistant.wake_word_enabled,
+            "wake_word": voice_assistant.wake_word,
+            "threshold": voice_assistant.wake_word_threshold,
+            "timeout": voice_assistant.wake_word_timeout,
+            "available_models": ["alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy"],
+            "model_loaded": voice_assistant._wake_word_model is not None
+        }
+    except Exception as e:
+        logger.error(f"Wake word status error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/voice/level")
+async def get_voice_level():
+    """Return latest microphone level telemetry"""
+    global voice_assistant
+    try:
+        if voice_assistant is None:
+            return {"rms": 0.0, "db": -120.0}
+        return {
+            "rms": voice_assistant.last_rms,
+            "db": voice_assistant.last_db
+        }
+    except Exception as e:
+        logger.error(f"Voice level error: {e}", exc_info=True)
+        return {"rms": 0.0, "db": -120.0}
 
 
 # ══════════════════════════════════════
@@ -1069,4 +1268,8 @@ if __name__ == "__main__":
     threading.Thread(target=detection_loop, daemon=True).start()
     threading.Thread(target=connection_monitor_loop, daemon=True).start()
     threading.Thread(target=video_stream_loop, daemon=True).start()
-    uvicorn.run(app, host="0.0.0.0", port=8082, access_log=False)
+    
+    # Use Server class for controlled shutdown
+    config = uvicorn.Config(app, host="0.0.0.0", port=8082, access_log=False)
+    server_instance = uvicorn.Server(config)
+    server_instance.run()

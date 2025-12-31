@@ -227,6 +227,33 @@ def setup_piper_tts():
         print("   Or install via: pip install piper-tts")
         return False
 
+def download_wake_word_models():
+    """Download wake word detection models"""
+    print("\n📥 Downloading wake word detection models...")
+    try:
+        from openwakeword import utils as oww_utils
+        print("Downloading openwakeword models (this may take a moment)...")
+        oww_utils.download_models()
+        print("✓ Wake word models downloaded successfully")
+        print("  Available wake words: alexa, hey_jarvis, hey_mycroft, hey_rhasspy")
+        return True
+    except ImportError:
+        print("⚠ openwakeword not installed")
+        print("   Installing openwakeword...")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "openwakeword"])
+            from openwakeword import utils as oww_utils
+            oww_utils.download_models()
+            print("✓ Wake word models downloaded successfully")
+            return True
+        except Exception as e:
+            print(f"✗ Error installing/downloading wake word models: {e}")
+            return False
+    except Exception as e:
+        print(f"✗ Error downloading wake word models: {e}")
+        print("   Models will auto-download on first use")
+        return False
+
 def main():
     print("=" * 60)
     print("AI Models & Voice Assistant Setup")
@@ -283,8 +310,13 @@ def main():
     if not download_piper_voice():
         print("⚠ Piper voice download failed, TTS will be disabled")
     
+    # Download wake word models
+    print("\n3. Downloading wake word detection models...")
+    if not download_wake_word_models():
+        print("⚠ Wake word models will auto-download on first use")
+    
     # Setup TTS
-    print("\n3. Checking TTS setup...")
+    print("\n4. Checking TTS setup...")
     setup_piper_tts()
     
     print("\n" + "=" * 60)
@@ -294,6 +326,11 @@ def main():
     print("1. Start the main server: python main.py")
     print("2. Open dashboard: http://localhost:8082")
     print("3. Click '🎤 Voice: Off' button to enable voice assistant")
+    print("4. (Optional) Say 'Hey Jarvis' for hands-free activation")
+    print("\n💡 Tips:")
+    print("   - Configure wake word in Settings → Voice Settings")
+    print("   - Choose from: Hey Jarvis, Alexa, Hey Mycroft, Hey Rhasspy")
+    print("   - Adjust sensitivity and timeout to your environment")
     print("\n⚠ Note: First run may take longer as models are loaded into memory")
     
     return True

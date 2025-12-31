@@ -89,7 +89,10 @@
                     </div>
                 </div>
 
-                <div style="margin-top:auto; padding-top:24px;">
+                <div style="margin-top:auto; padding-top:24px; display:flex; flex-direction:column; gap:8px;">
+                    <button class="action-btn" id="restart-btn" style="background:#FFA500; color:#000;">
+                        <span class="icon">🔄</span> Restart
+                    </button>
                     <button class="action-btn danger" id="power-btn">
                         <span class="icon">⛔</span> Shutdown
                     </button>
@@ -198,6 +201,16 @@
                                 <div class="slider-label"><span>Level</span><span class="slider-val" id="volume-val">50%</span></div>
                                 <input type="range" id="volume-slider" min="0" max="100" value="50">
                             </div>
+                        </div>
+                        <div class="control-group" style="margin-top:12px;">
+                            <h4 style="display:flex; align-items:center; justify-content:space-between;">
+                                Microphone Level
+                                <small id="mic-level-db-main" style="color:var(--text-muted); font-size:11px; font-weight:normal;">-∞ dB</small>
+                            </h4>
+                            <div style="position:relative; height:12px; background:var(--bg-elevated); border-radius:6px; overflow:hidden;">
+                                <div id="mic-level-bar-main" style="position:absolute; left:0; top:0; height:100%; width:0%; background:linear-gradient(90deg, #4ade80, #f97316, #ef4444); transition:width 0.1s ease-out;"></div>
+                            </div>
+                            <button id="test-mic-level-btn" style="margin-top:6px; padding:6px 12px; font-size:11px; background:var(--accent); color:#000; border:none; border-radius:3px; cursor:pointer;">Test Mic Level</button>
                         </div>
                     </div>
                 </div>
@@ -352,6 +365,64 @@
                             <span id="volume-display">50%</span>
                         </div>
                     </div>
+                    <div class="settings-row" style="margin-top:10px;">
+                        <label style="display:flex; align-items:center; gap:8px;">
+                            <span>Microphone Level</span>
+                            <small id="mic-level-db" style="color:var(--text-muted);">-∞ dB</small>
+                        </label>
+                        <div style="position:relative; height:10px; background:var(--bg-elevated); border-radius:5px; overflow:hidden;">
+                            <div id="mic-level-bar" style="position:absolute; left:0; top:0; height:100%; width:0%; background:linear-gradient(90deg, #4ade80, #f97316, #ef4444);"></div>
+                        </div>
+                        <p class="info-text" style="font-size:11px; margin-top:4px;">Live mic input from Reachy Mini. Moves when sound is detected.</p>
+                    </div>
+                </div>
+                
+                <div class="settings-group">
+                    <h3>Wake Word Detection</h3>
+                    <p class="info-text">🎤 Hands-free activation - say the wake word to interact without pressing buttons.</p>
+                    
+                    <div class="settings-row">
+                        <label>
+                            <input type="checkbox" id="wake-word-enabled" style="margin-right:8px;">
+                            Enable Wake Word Detection
+                        </label>
+                    </div>
+                    
+                    <div class="settings-row">
+                        <label>Wake Word:</label>
+                        <select id="wake-word-model" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:4px; background:var(--bg-elevated); color:var(--text);">
+                            <option value="hey_jarvis">Hey Jarvis</option>
+                            <option value="alexa">Alexa</option>
+                            <option value="hey_mycroft">Hey Mycroft</option>
+                            <option value="hey_rhasspy">Hey Rhasspy</option>
+                        </select>
+                    </div>
+                    
+                    <div class="settings-row">
+                        <label>Sensitivity (Detection Threshold):</label>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <input type="range" id="wake-word-threshold" min="0.1" max="0.9" step="0.05" value="0.5" style="flex:1;">
+                            <span id="wake-word-threshold-val" style="min-width:60px;">0.50</span>
+                        </div>
+                        <p class="info-text" style="font-size:11px; margin-top:4px;">Lower = more sensitive (may have false triggers), Higher = less sensitive (may miss wake word).</p>
+                    </div>
+                    
+                    <div class="settings-row">
+                        <label>Listening Timeout (seconds):</label>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <input type="range" id="wake-word-timeout" min="3" max="15" step="1" value="5" style="flex:1;">
+                            <span id="wake-word-timeout-val" style="min-width:60px;">5s</span>
+                        </div>
+                        <p class="info-text" style="font-size:11px; margin-top:4px;">How long to listen for commands after wake word detected.</p>
+                    </div>
+                    
+                    <div class="settings-row" style="margin-top:15px;">
+                        <button id="save-wake-word-btn" class="action-btn" style="background:var(--success); color:#000;">💾 Save Wake Word Settings</button>
+                    </div>
+                    
+                    <div id="wake-word-status" style="margin-top:10px; padding:8px; border-radius:4px; background:var(--bg-elevated); font-size:12px; display:none;">
+                        <strong>Status:</strong> <span id="wake-word-status-text">Initializing...</span>
+                    </div>
                 </div>
             </div>
 
@@ -427,6 +498,17 @@
                 </div>
                 
                 <div class="settings-group">
+                    <h3>Debug & Logging</h3>
+                    <div class="settings-row">
+                        <label>
+                            <input type="checkbox" id="verbose-logging-toggle" style="margin-right:8px;">
+                            Browser Console Logging
+                        </label>
+                        <p class="info-text">🔧 Enable detailed logging for troubleshooting and development.</p>
+                    </div>
+                </div>
+                
+                <div class="settings-group">
                     <h3>About</h3>
                     <p>Reachy Control v1.0</p>
                     <p id="backend-info" style="font-size:12px; color:var(--text-muted);">Backend: Initializing...</p>
@@ -437,14 +519,30 @@
 
     <script>
         const $ = id => document.getElementById(id);
-        let isPaused = false, voiceEnabled = false, wiggleEnabled = false;
+        let isPaused = true, voiceEnabled = false, wiggleEnabled = false;  // Start paused to match server default
+        let verboseLogging = localStorage.getItem('verbose_logging') === 'true';
 
         // Simple console logger wrapper
         const logger = {
-            info: (...args) => console.log('[INFO]', ...args),
-            warn: (...args) => console.warn('[WARN]', ...args),
-            error: (...args) => console.error('[ERROR]', ...args)
+            info: (...args) => verboseLogging && console.log('[INFO]', ...args),
+            warn: (...args) => verboseLogging && console.warn('[WARN]', ...args),
+            error: (...args) => verboseLogging && console.error('[ERROR]', ...args)
         };
+        
+        const vlog = (...args) => verboseLogging && console.log(...args);
+        
+        // Set up verbose logging toggle
+        window.addEventListener('load', () => {
+            const toggle = $('verbose-logging-toggle');
+            if (toggle) {
+                toggle.checked = verboseLogging;
+                toggle.addEventListener('change', (e) => {
+                    verboseLogging = e.target.checked;
+                    localStorage.setItem('verbose_logging', verboseLogging ? 'true' : 'false');
+                    vlog('[SETTINGS] Verbose logging toggled to:', verboseLogging);
+                });
+            }
+        });
 
         // ══════════════════════════════════════
         // CHAT
@@ -493,16 +591,25 @@
         function updatePauseUI() {
             const btn = $('pause-btn');
             const overlay = $('manual-overlay');
+            vlog('[updatePauseUI] isPaused:', isPaused, 'btn exists:', !!btn, 'overlay exists:', !!overlay);
+            
+            if (!btn || !overlay) {
+                vlog('[updatePauseUI] ERROR: DOM elements not found! btn:', btn, 'overlay:', overlay);
+                return;
+            }
+            
             if (isPaused) {
                 btn.classList.add('active');
                 btn.innerHTML = '<span class="icon">▶️</span> Resume';
                 overlay.style.opacity = '1';
                 overlay.style.pointerEvents = 'auto';
+                vlog('[updatePauseUI] Applied PAUSED state: active=true, opacity=1');
             } else {
                 btn.classList.remove('active');
                 btn.innerHTML = '<span class="icon">⏸️</span> Pause Tracking';
                 overlay.style.opacity = '0.4';
                 overlay.style.pointerEvents = 'none';
+                vlog('[updatePauseUI] Applied RUNNING state: active=false, opacity=0.4');
             }
         }
 
@@ -526,6 +633,17 @@
             const data = await res.json();
             voiceEnabled = data.voice_enabled;
             $('voice-btn').classList.toggle('active', voiceEnabled);
+        };
+
+        $('restart-btn').onclick = async () => {
+            if (confirm('Restart the system? This will reload all settings and reconnect to the robot.')) {
+                await fetch('/api/restart', { method: 'POST' });
+                document.body.innerHTML = '<div style="display:flex;height:100vh;align-items:center;justify-content:center;color:#fff;font-family:sans-serif;"><h1>🔄 Restarting...</h1><p>Please wait, the page will reload automatically.</p></div>';
+                // Wait a moment then reload
+                setTimeout(() => {
+                    window.location.reload();
+                }, 3000);
+            }
         };
 
         $('power-btn').onclick = async () => {
@@ -598,6 +716,54 @@
                 body: JSON.stringify({ volume: +e.target.value })
             });
         };
+
+        // Mic level polling for soundbar indicator
+        function startMicLevelPolling() {
+            // Use main visible bar if available, fallback to settings bar
+            let bar = $('mic-level-bar-main');
+            let dbLabel = $('mic-level-db-main');
+            
+            // Also try to update the settings version if it's loaded
+            let settingsBar = $('mic-level-bar');
+            let settingsDbLabel = $('mic-level-db');
+
+            if (!bar && !settingsBar) return;
+
+            let lastValue = 0;
+            const smoothing = 0.35; // simple low-pass smoothing
+            const intervalMs = 200; // 5 Hz polling
+
+            async function poll() {
+                try {
+                    const resp = await fetch('/api/voice/level');
+                    if (!resp.ok) throw new Error('level request failed');
+                    const data = await resp.json();
+
+                    const rms = typeof data.rms === 'number' ? data.rms : 0;
+                    const db = typeof data.db === 'number' ? data.db : -Infinity;
+
+                    const maxRms = 0.2; // clamp to typical speech RMS
+                    const target = Math.max(0, Math.min(1, rms / maxRms));
+                    lastValue = lastValue + smoothing * (target - lastValue);
+                    const pct = Math.round(lastValue * 100);
+                    
+                    const dbText = Number.isFinite(db) ? `${db.toFixed(1)} dB` : '-∞ dB';
+
+                    // Update main bar
+                    if (bar) bar.style.width = `${pct}%`;
+                    if (dbLabel) dbLabel.textContent = dbText;
+
+                    // Update settings bar (if visible)
+                    if (settingsBar) settingsBar.style.width = `${pct}%`;
+                    if (settingsDbLabel) settingsDbLabel.textContent = dbText;
+                } catch (err) {
+                    // silently ignore to keep UI calm
+                }
+            }
+
+            poll();
+            setInterval(poll, intervalMs);
+        }
 
         // ══════════════════════════════════════
         // THEME SELECTION
@@ -1078,11 +1244,103 @@
         loadTuningSettings();
 
         // ══════════════════════════════════════
-        // NYAN CAT WITH CANVAS ANIMATION
+        // WAKE WORD DETECTION SETTINGS
         // ══════════════════════════════════════
+        
+        async function loadWakeWordSettings() {
+            try {
+                const res = await fetch('/api/voice/wake-word/status');
+                const data = await res.json();
+                
+                $('wake-word-enabled').checked = data.enabled || false;
+                $('wake-word-model').value = data.wake_word || 'hey_jarvis';
+                $('wake-word-threshold').value = data.threshold || 0.5;
+                $('wake-word-threshold-val').textContent = (data.threshold || 0.5).toFixed(2);
+                $('wake-word-timeout').value = data.timeout || 5;
+                $('wake-word-timeout-val').textContent = (data.timeout || 5) + 's';
+                
+                // Show status
+                $('wake-word-status').style.display = 'block';
+                const modelStatus = data.model_loaded ? '✅ Loaded' : '⏳ Not loaded';
+                $('wake-word-status-text').textContent = `${data.enabled ? 'Enabled' : 'Disabled'} | Model: ${modelStatus}`;
+                
+                logger.info('Wake word settings loaded:', data);
+            } catch (e) {
+                console.error('Error loading wake word settings:', e);
+            }
+        }
+        
+        // Update threshold display in real-time
+        $('wake-word-threshold').oninput = () => {
+            $('wake-word-threshold-val').textContent = parseFloat($('wake-word-threshold').value).toFixed(2);
+        };
+        
+        // Update timeout display in real-time
+        $('wake-word-timeout').oninput = () => {
+            $('wake-word-timeout-val').textContent = $('wake-word-timeout').value + 's';
+        };
+        
+        // Save wake word settings
+        $('save-wake-word-btn').onclick = async () => {
+            try {
+                const settings = {
+                    enabled: $('wake-word-enabled').checked,
+                    wake_word: $('wake-word-model').value,
+                    threshold: parseFloat($('wake-word-threshold').value),
+                    timeout: parseFloat($('wake-word-timeout').value)
+                };
+                
+                const res = await fetch('/api/voice/wake-word/configure', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(settings)
+                });
+                
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    await loadWakeWordSettings(); // Reload to confirm
+                    alert('✅ Wake word settings saved! Changes will apply when voice assistant is next enabled.');
+                    logger.info('Wake word settings saved:', settings);
+                } else {
+                    alert('❌ Error: ' + (data.message || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Error saving wake word settings:', e);
+                alert('❌ Error saving wake word settings');
+            }
+        };
+        
+        // Load wake word settings when voice tab is opened
+        document.querySelector('[data-tab="voice-tab"]').addEventListener('click', loadWakeWordSettings);
+        
+        // Initial load when page loads (if voice tab is already open)
+        loadWakeWordSettings();
+        startMicLevelPolling();
+
+         // Test mic level API
+         $('test-mic-level-btn').onclick = async () => {
+             try {
+                 const resp = await fetch('/api/voice/level');
+                 const data = await resp.json();
+                 console.log('Mic level API response:', data);
+                 alert(`API Response:\nRMS: ${data.rms?.toFixed(4) || 'N/A'}\ndB: ${data.db?.toFixed(1) || 'N/A'}`);
+                 
+                 // Test bar rendering: set to 50%
+                 const bar = $('mic-level-bar-main');
+                 if (bar) {
+                     bar.style.width = '50%';
+                     console.log('Bar set to 50% for testing');
+                 } else {
+                     console.warn('Bar element not found');
+                 }
+             } catch (err) {
+                 alert('Error fetching mic level: ' + err.message);
+                 console.error(err);
+             }
+         };
+        let nyanAnimationId = null;
         let nyanCanvas = null;
         let nyanCtx = null;
-        let nyanAnimationId = null;
         
         function initNyanCat() {
             const theme = document.documentElement.getAttribute('data-theme');
@@ -1225,7 +1483,7 @@
         // ══════════════════════════════════════
         // POLLING
         // ══════════════════════════════════════
-        setInterval(async () => {
+        async function refreshStatus() {
             try {
                 const res = await fetch('/status');
                 const data = await res.json();
@@ -1238,7 +1496,7 @@
                 $('wiggle-btn').classList.toggle('active', wiggleEnabled);
 
                 // Pause sync
-                if (data.paused !== undefined && data.paused !== isPaused) {
+                if (data.paused !== undefined) {
                     isPaused = data.paused;
                     updatePauseUI();
                 }
@@ -1292,7 +1550,53 @@
                     }
                 }
             } catch (e) { }
-        }, 500);
+        }
+        
+        // Initial status fetch on page load
+        async function initializePageState() {
+            vlog('[initializePageState] Starting async fetch...');
+            try {
+                const res = await fetch('/status');
+                const data = await res.json();
+                
+                // Set initial pause state from server
+                if (data.paused !== undefined) {
+                    isPaused = data.paused;
+                    vlog('[initializePageState] Fetched server state: paused =', isPaused);
+                } else {
+                    vlog('[initializePageState] Server did not return paused state');
+                }
+            } catch (e) {
+                console.error('[initializePageState] Failed to fetch:', e);
+            }
+            // Always update UI after fetching (or on failure with default)
+            vlog('[initializePageState] Calling updatePauseUI after server fetch');
+            updatePauseUI();
+        }
+        
+        // Wait for DOM to be fully loaded before running initialization
+        function startInitialization() {
+            vlog('[INIT] DOM Ready. isPaused =', isPaused);
+            vlog('[INIT] DOM check - pause-btn:', !!document.getElementById('pause-btn'), 'manual-overlay:', !!document.getElementById('manual-overlay'));
+            
+            vlog('[INIT] Calling updatePauseUI immediately');
+            updatePauseUI();
+            
+            vlog('[INIT] Calling initializePageState async');
+            initializePageState();
+            
+            // Poll every 500ms
+            setInterval(refreshStatus, 500);
+        }
+        
+        // Run on page load
+        if (document.readyState === 'loading') {
+            vlog('[INIT] Document still loading, waiting for DOMContentLoaded...');
+            document.addEventListener('DOMContentLoaded', startInitialization);
+        } else {
+            vlog('[INIT] Document already loaded, starting immediately...');
+            startInitialization();
+        }
     </script>
 </body>
 

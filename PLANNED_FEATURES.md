@@ -4,15 +4,6 @@ Future enhancements and improvements for the Reachy Tracking & Control system.
 
 ## Planned Features
 
-### In Progress
-
-#### Wake Word Detection
-- **Status**: In Progress
-- **Description**: Integrate Porcupine/KWS for "Hey Reachy" wake word
-- **Impact**: More natural voice activation (no button press needed)
-- **Dependencies**: Porcupine SDK or similar KWS library
-- **Success Criteria**: <1% false accept rate, <5% false reject rate
-
 ### High Priority (Now - 0-2 days)
 
 #### GPU Acceleration
@@ -325,6 +316,25 @@ Future enhancements and improvements for the Reachy Tracking & Control system.
 - **Description**: Tracking automatically pauses during speech to prevent conflicts
 - **Implementation**: `_pause_tracking` flag managed by voice assistant
 - **Result**: Smooth speech animations without tracking interference
+
+### ✅ Wake Word Detection (Completed)
+- **Completed**: December 30, 2025
+- **Description**: Hands-free voice activation using wake word detection
+- **Components**:
+  - openwakeword library for CPU-friendly wake word detection
+  - Multiple wake word options (Hey Jarvis, Alexa, Hey Mycroft, Hey Rhasspy)
+  - Configurable sensitivity threshold (0.1-0.9)
+  - Adjustable listening timeout (3-15 seconds)
+  - Dashboard UI controls for configuration
+  - API endpoints for programmatic configuration
+- **Features**:
+  - ONNX-based models (~10MB) auto-download on first use
+  - Real-time wake word detection with <100ms latency
+  - Visual feedback (excited emotion) when wake word detected
+  - Automatic return to wake word detection after response
+  - Can be disabled for manual activation mode
+- **Files**: `voice_assistant.py` (_listen_loop, _load_wake_word_model), `main.py` (API endpoints), `static/index.html` (UI controls)
+- **Documentation**: VOICE_ASSISTANT.md updated with comprehensive wake word guide
 
 ---
 

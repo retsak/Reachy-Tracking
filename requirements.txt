@@ -20,3 +20,4 @@ hf_xet
 huggingface-hub
 psutil
 openai
+openwakeword

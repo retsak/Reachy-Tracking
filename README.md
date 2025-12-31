@@ -15,6 +15,7 @@ An autonomous tracking and control system for the Reachy robot with integrated v
 
 ### 🎤 Voice Assistant
 - **Natural Conversation**: Full voice interaction with conversational AI.
+- **Wake Word Detection**: Hands-free activation - say "Hey Jarvis" (or Alexa/Hey Mycroft/Hey Rhasspy) to interact without button press.
 - **Multi-Provider LLM Support**: 
     - **OpenAI** (GPT-3.5, GPT-4, GPT-5)
     - **Ollama** (local models like Llama 2)
@@ -211,6 +212,14 @@ If the robot daemon is on a different machine or port, update the `host` paramet
     
     The dashboard opens automatically on startup.
 
+4. **Enable Voice Assistant (Optional):**
+    - Click the **"🎤 Voice: Off"** button in the dashboard
+    - Wait for models to load (30-60 seconds first time)
+    - Once active, you can:
+      - **Say "Hey Jarvis"** (or your configured wake word) for hands-free interaction
+      - Or use the text command box for typed interactions
+    - Configure wake word in **Settings → Voice Settings** tab
+
 ## Dashboard Features
 
 ### Emotion System
@@ -270,12 +279,43 @@ Theme selection persists between sessions.
 
 ## Voice Assistant
 
-- **Stack**: STT (Faster-Whisper), LLM (OpenAI/Ollama/Local), TTS (Piper).
+- **Stack**: STT (Faster-Whisper), LLM (OpenAI/Ollama/Local), TTS (Piper), Wake Word Detection (openwakeword).
 - **Caching**: Whisper uses local `download_root`; LLM uses local `cache_dir`; Piper reads voices from `models/piper`.
 - **Enable**: In the dashboard, click "🎤 Voice: Off" to start listening.
 - **Flow**: Listens → transcribes → generates → speaks (if a Piper voice is present).
+- **Wake Word**: Say "Hey Jarvis" (or other configured wake word) for hands-free activation - no button press needed!
 - **Status**: `/api/voice/status` returns voice state, `models` info, and any `error`.
 - **Commands**: POST `/api/voice/text_command` (optionally `speak: true`) or `/api/voice/speak`.
+
+### Wake Word Detection
+
+The voice assistant includes hands-free activation using wake word detection:
+
+**Features:**
+- 🎤 **Hands-Free**: Say the wake word to activate (no button press needed)
+- 🔄 **Multiple Options**: Choose from Hey Jarvis (default), Alexa, Hey Mycroft, Hey Rhasspy
+- ⚙️ **Configurable**: Adjust sensitivity threshold (0.1-0.9) and listening timeout (3-15s)
+- 💻 **Efficient**: CPU-friendly ONNX models with <100ms detection latency
+
+**Configuration:**
+1. Dashboard → Settings → Voice Settings tab
+2. Enable "Wake Word Detection"
+3. Select your preferred wake word
+4. Adjust sensitivity (0.5 recommended) and timeout (5s default)
+5. Save and restart voice assistant
+
+**Usage:**
+1. Enable voice assistant ("🎤 Voice: Off" button)
+2. Say your wake word (e.g., "Hey Jarvis")
+3. Robot shows excitement emotion when wake word detected
+4. Speak your command within the timeout period (default 5 seconds)
+5. Robot processes and responds, then returns to listening for wake word
+
+**API Endpoints:**
+- `GET /api/voice/wake-word/status` - Get current wake word configuration
+- `POST /api/voice/wake-word/configure` - Update wake word settings
+
+See [VOICE_ASSISTANT.md](VOICE_ASSISTANT.md) for detailed wake word configuration guide.
 
 ### LLM Configuration
 
