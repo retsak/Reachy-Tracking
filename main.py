@@ -708,6 +708,14 @@ def get_status():
             "score": next((c['score'] for c in LATEST_CANDIDATES if c['id'] == current_target_id), 0)
         }
     
+    # Backend information
+    import sys
+    backend_info = {
+        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "robot_connected": robot is not None and robot.is_connected,
+        "voice_enabled": VOICE_STATE["enabled"]
+    }
+    
     return {
         "status": current_status,
         "paused": SERVER_STATE["paused"],
@@ -716,6 +724,7 @@ def get_status():
         "current_target": target_info,
         "candidates": LATEST_CANDIDATES,
         "volume": int(getattr(robot, 'audio_volume', 0.25) * 100),
+        "backend": backend_info,
         "pose": {
              "head_yaw": robot.current_yaw, # We might need to expose these from robot controller
              "head_pitch": robot.current_pitch,

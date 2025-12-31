@@ -1765,6 +1765,13 @@
 
                 // Status
                 $('status-text').textContent = data.status || 'Ready';
+                
+                // Backend info
+                if (data.backend) {
+                    const robotStatus = data.backend.robot_connected ? '✅ Connected' : '❌ Disconnected';
+                    const voiceStatus = data.backend.voice_enabled ? '🎤 Enabled' : '🔇 Disabled';
+                    $('backend-info').innerHTML = `Backend: Python ${data.backend.python_version} | Robot: ${robotStatus} | Voice: ${voiceStatus}`;
+                }
 
                 // Wiggle
                 wiggleEnabled = data.wiggle_enabled;
