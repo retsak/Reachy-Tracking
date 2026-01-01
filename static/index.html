@@ -1728,6 +1728,14 @@
                         }
                     });
                     
+                    // Restore previously selected voice from localStorage if available
+                    const savedVoice = localStorage.getItem('selectedVoice');
+                    if (savedVoice && voiceSelect.querySelector(`option[value="${savedVoice}"]`)) {
+                        voiceSelect.value = savedVoice;
+                    } else if (data.selected_voice) {
+                        voiceSelect.value = data.selected_voice;
+                    }
+                    
                     // Update status display
                     $('voice-status').style.display = 'block';
                     $('voice-status-text').textContent = data.selected_voice || 'None';
@@ -1760,6 +1768,8 @@
                 
                 const data = await res.json();
                 if (data.status === 'ok') {
+                    // Save voice selection to localStorage
+                    localStorage.setItem('selectedVoice', voiceName);
                     await loadAvailableVoices();
                     alert('✅ Voice changed to: ' + voiceName);
                     logger.info('Voice set to:', voiceName);
@@ -1815,6 +1825,8 @@
                         });
                         const setData = await setRes.json();
                         if (setData.status === 'ok') {
+                            // Save voice selection to localStorage
+                            localStorage.setItem('selectedVoice', voiceName);
                             await loadAvailableVoices();
                             alert('✅ Downloaded and set voice to: ' + voiceName);
                             logger.info('Voice downloaded and set to:', voiceName);
