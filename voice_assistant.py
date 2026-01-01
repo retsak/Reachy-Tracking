@@ -682,8 +682,27 @@ Rules:
             for onnx_file in onnx_files:
                 voice_name = onnx_file.stem  # Remove .onnx extension
                 json_file = self.piper_dir / f"{voice_name}.onnx.json"
-                if json_file.exists():
-                    self.available_voices.append(voice_name)
+                
+                # Verify JSON file exists and is valid
+                if not json_file.exists():
+                    logger.debug(f"Skipping {voice_name}: .onnx.json file not found")
+                    continue
+                
+                # Verify JSON is not empty and valid
+                try:
+                    with open(json_file, 'r', encoding='utf-8') as f:
+                        json_content = f.read().strip()
+                        if not json_content:
+                            logger.debug(f"Skipping {voice_name}: .onnx.json file is empty")
+                            continue
+                        json.loads(json_content)  # Validate JSON
+                        self.available_voices.append(voice_name)
+                except json.JSONDecodeError as e:
+                    logger.debug(f"Skipping {voice_name}: invalid JSON - {e}")
+                    continue
+                except Exception as e:
+                    logger.debug(f"Skipping {voice_name}: error reading JSON - {e}")
+                    continue
             
             if self.available_voices:
                 logger.info(f"📋 Found {len(self.available_voices)} Piper voices: {self.available_voices}")
@@ -840,6 +859,30 @@ Rules:
             self._load_available_voices()  # Refresh list
         
         if voice_name in self.available_voices:
+            # Verify both .onnx and .onnx.json files exist and are valid
+            voice_onnx = self.piper_dir / f"{voice_name}.onnx"
+            voice_json = self.piper_dir / f"{voice_name}.onnx.json"
+            
+            if not voice_onnx.exists():
+                logger.warning(f"Voice .onnx file not found: {voice_onnx}")
+                return False
+            
+            if not voice_json.exists():
+                logger.warning(f"Voice .onnx.json file not found: {voice_json}")
+                return False
+            
+            # Validate JSON is not empty
+            try:
+                with open(voice_json, 'r', encoding='utf-8') as f:
+                    json_content = f.read().strip()
+                    if not json_content:
+                        logger.warning(f"Voice .onnx.json file is empty: {voice_json}")
+                        return False
+                    json.loads(json_content)  # Parse to validate
+            except Exception as e:
+                logger.warning(f"Voice .onnx.json file is invalid: {voice_json} - {e}")
+                return False
+            
             self.selected_voice = voice_name
             # Reset piper model to force reload with new voice
             self._piper_model = None

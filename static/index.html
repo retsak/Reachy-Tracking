@@ -606,6 +606,10 @@
             
             // Load voice settings on page load
             loadAvailableVoices();
+            // Restore previously saved voice after a small delay to ensure dropdown is ready
+            setTimeout(() => {
+                restoreSavedVoice();
+            }, 500);
         });
 
         // ══════════════════════════════════════
@@ -1728,14 +1732,6 @@
                         }
                     });
                     
-                    // Restore previously selected voice from localStorage if available
-                    const savedVoice = localStorage.getItem('selectedVoice');
-                    if (savedVoice && voiceSelect.querySelector(`option[value="${savedVoice}"]`)) {
-                        voiceSelect.value = savedVoice;
-                    } else if (data.selected_voice) {
-                        voiceSelect.value = data.selected_voice;
-                    }
-                    
                     // Update status display
                     $('voice-status').style.display = 'block';
                     $('voice-status-text').textContent = data.selected_voice || 'None';
@@ -1748,6 +1744,36 @@
             } catch (e) {
                 console.error('Error loading available voices:', e);
                 $('tts-voice-select').innerHTML = '<option>Error loading voices</option>';
+            }
+        }
+        
+        // Restore previously selected voice from localStorage
+        async function restoreSavedVoice() {
+            const savedVoice = localStorage.getItem('selectedVoice');
+            if (!savedVoice) {
+                console.log('No saved voice in localStorage');
+                return;
+            }
+            
+            console.log('Restoring saved voice:', savedVoice);
+            try {
+                const res = await fetch('/api/voice/voices/set', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ voice: savedVoice })
+                });
+                
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    console.log('Successfully restored voice:', savedVoice);
+                    await loadAvailableVoices();
+                } else {
+                    console.warn('Failed to restore voice:', data.message);
+                    // Clear bad localStorage entry
+                    localStorage.removeItem('selectedVoice');
+                }
+            } catch (e) {
+                console.error('Error restoring voice:', e);
             }
         }
         
