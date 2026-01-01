@@ -98,6 +98,72 @@ TRAINING_TEXTS = [
     "Could you please elaborate on that particular point?",
     "I completely agree with your assessment of the situation.",
     "What are your thoughts on implementing this new strategy?",
+    
+    # Additional vowel and consonant coverage
+    "Buffalo buffalo Buffalo buffalo buffalo buffalo Buffalo buffalo.",
+    "Unique and unforgettable experiences create lasting memories.",
+    "Reliable research reveals remarkable results repeatedly.",
+    "Dull data doesn't describe dynamic decisions well.",
+    "Great groups generate genuinely grand gatherings.",
+    
+    # More consonant clusters
+    "Shrewdly shred shredded shrubs and shrunk shrimpshells.",
+    "Splendid splashes split across sprawling sprinklers.",
+    "Strict structures restrict streaming script strips.",
+    "Thrown threads threaten three thrashing thrushes.",
+    "Scratchpads scramble through cryptic script scrawls.",
+    
+    # Additional emotional/prosodic patterns
+    "Wow, that's absolutely incredible and wonderful!",
+    "Sorry, I didn't quite understand that correctly.",
+    "Thank you so much for your incredible patience and help.",
+    "Seriously? That seems completely unreasonable to me.",
+    "Perhaps we should reconsider our original approach here.",
+    "Definitely, that's the best solution we could implement.",
+    "Honestly, I'm feeling quite uncertain about this decision.",
+    "Wow, I'm impressed with your remarkable dedication.",
+    
+    # Technical and complex speech
+    "Algorithms automatically analyze architectural abstractions adequately.",
+    "Methodological frameworks facilitate functional optimization effectively.",
+    "Comprehensive computational capabilities compute complex calculations correctly.",
+    "Systematic standardization strengthens structural stability significantly.",
+    "Innovative infrastructure integrates intelligent integration intelligently.",
+    
+    # Rapid speech patterns
+    "She shed seventeen shimmering silvery shells swiftly.",
+    "Quickly quelled questionable quantum quandaries quite quietly.",
+    "Brilliantly bounded behavioral biology becomes biological benchmarks.",
+    "Swiftly switched streamlined systematic switch statistics swirly.",
+    "Precisely presented preemptive principal professional prevention programs.",
+    
+    # Soft and gentle patterns
+    "Whisper softly as we wander through the woods together.",
+    "Gently guide the gossamer gift into the garden gazebo.",
+    "Hush now, listen to the harmonious humming of the hummingbird.",
+    "Please pause and ponder the peaceful path before proceeding.",
+    "Meander mindfully, musing on life's meaningful moments.",
+    
+    # Hard and forceful patterns
+    "Concrete construction conquered by catastrophic collapse concerns.",
+    "Brutal black backs break through barriers boldly backing.",
+    "Crashing, clanging cymbals create chaotic cacophonic calls.",
+    "Decisive determination defines determined drivers' destinations determinedly.",
+    "Forceful forward focus fortifies formidable fortress foundations.",
+    
+    # Mixed emotional intensity
+    "Listen carefully because this is critically crucial information!",
+    "I need to tell you something rather serious and important.",
+    "You know what, forget it, it doesn't really matter anyway.",
+    "Actually, I think you're absolutely right about everything.",
+    "Hold on, let me reconsider that perspective for a moment.",
+    
+    # Articulation challenges
+    "Sixth sheets of sheer silk shimmer in the sunshine.",
+    "Theophilus Thistle, the thistle sifter, sifted thistles through a thistle sifter.",
+    "Rural juror jury juridical judicious judicial jurisdiction.",
+    "Statistics show sixths should suggest systematic solutions.",
+    "Worcestershire sauce splashed across the workshop.",
 ]
 
 def load_voice_assistant() -> VoiceAssistant:
