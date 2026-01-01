@@ -454,12 +454,12 @@
                         <select id="tts-voice-select" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text);">
                             <option value="">🔄 Loading voices...</option>
                         </select>
-                        <p class="info-text" style="font-size:11px; margin-top:4px;">Select which voice the robot uses for text-to-speech. Currently supports English (en_US) and British English (en_GB).</p>
+                        <p class="info-text" style="font-size:11px; margin-top:4px;">Select which voice the robot uses for text-to-speech. Supports 35+ languages including English, Spanish, German, French, Italian, Russian, Chinese, and many more. Voices marked with ⬇️ need to be downloaded first.</p>
                     </div>
                     
                     <div class="settings-row">
                         <button id="save-voice-btn" class="action-btn" style="background:var(--success); color:#000;">💾 Set Voice</button>
-                        <button id="download-voice-btn" class="action-btn" style="background:var(--info); color:#000; margin-left:8px;">⬇️ Download Voice</button>
+                        <button id="download-voice-btn" class="action-btn" style="background:#4a9eff; color:#000; margin-left:8px;">⬇️ Download Voice</button>
                     </div>
                     
                     <div id="voice-download-progress" style="margin-top:8px; display:none; padding:8px; background:var(--surface); border-radius:4px;">
@@ -1639,39 +1639,84 @@
                         return parts.map(p => p.replace(/\b\w/g, l => l.toUpperCase())).join(' ');
                     };
                     
-                    // Add US English voices
-                    if (catalog.en_US && catalog.en_US.length > 0) {
-                        const usGroup = document.createElement('optgroup');
-                        usGroup.label = '🇺🇸 English (US)';
-                        catalog.en_US.forEach(voiceInfo => {
-                            const opt = document.createElement('option');
-                            opt.value = voiceInfo.name;
-                            const displayName = formatVoiceName(voiceInfo.name);
-                            opt.textContent = voiceInfo.downloaded 
-                                ? `${displayName}` 
-                                : `${displayName} ⬇️`;
-                            if (voiceInfo.name === data.selected_voice) opt.selected = true;
-                            usGroup.appendChild(opt);
-                        });
-                        voiceSelect.appendChild(usGroup);
-                    }
+                    // Language labels with flags
+                    const languageLabels = {
+                        'en_US': '🇺🇸 English (US)',
+                        'en_GB': '🇬🇧 English (GB)',
+                        'ar_JO': '🇯🇴 Arabic (Jordan)',
+                        'bg_BG': '🇧🇬 Bulgarian',
+                        'ca_ES': '🇪🇸 Catalan',
+                        'cs_CZ': '🇨🇿 Czech',
+                        'cy_GB': '🏴󠁧󠁢󠁷󠁬󠁳󠁿 Welsh',
+                        'da_DK': '🇩🇰 Danish',
+                        'de_DE': '🇩🇪 German',
+                        'el_GR': '🇬🇷 Greek',
+                        'es_AR': '🇦🇷 Spanish (Argentina)',
+                        'es_ES': '🇪🇸 Spanish (Spain)',
+                        'es_MX': '🇲🇽 Spanish (Mexico)',
+                        'fa_IR': '🇮🇷 Persian',
+                        'fi_FI': '🇫🇮 Finnish',
+                        'fr_FR': '🇫🇷 French',
+                        'he_IL': '🇮🇱 Hebrew',
+                        'hi_IN': '🇮🇳 Hindi',
+                        'hu_HU': '🇭🇺 Hungarian',
+                        'id_ID': '🇮🇩 Indonesian',
+                        'is_IS': '🇮🇸 Icelandic',
+                        'it_IT': '🇮🇹 Italian',
+                        'ka_GE': '🇬🇪 Georgian',
+                        'kk_KZ': '🇰🇿 Kazakh',
+                        'lb_LU': '🇱🇺 Luxembourgish',
+                        'lv_LV': '🇱🇻 Latvian',
+                        'ml_IN': '🇮🇳 Malayalam',
+                        'ne_NP': '🇳🇵 Nepali',
+                        'nl_BE': '🇧🇪 Dutch (Belgium)',
+                        'nl_NL': '🇳🇱 Dutch (Netherlands)',
+                        'no_NO': '🇳🇴 Norwegian',
+                        'pl_PL': '🇵🇱 Polish',
+                        'pt_BR': '🇧🇷 Portuguese (Brazil)',
+                        'pt_PT': '🇵🇹 Portuguese (Portugal)',
+                        'ro_RO': '🇷🇴 Romanian',
+                        'ru_RU': '🇷🇺 Russian',
+                        'sk_SK': '🇸🇰 Slovak',
+                        'sl_SI': '🇸🇮 Slovenian',
+                        'sr_RS': '🇷🇸 Serbian',
+                        'sv_SE': '🇸🇪 Swedish',
+                        'sw_CD': '🇨🇩 Swahili (Congo)',
+                        'te_IN': '🇮🇳 Telugu',
+                        'tr_TR': '🇹🇷 Turkish',
+                        'uk_UA': '🇺🇦 Ukrainian',
+                        'vi_VN': '🇻🇳 Vietnamese',
+                        'zh_CN': '🇨🇳 Chinese (Mandarin)',
+                    };
                     
-                    // Add GB English voices
-                    if (catalog.en_GB && catalog.en_GB.length > 0) {
-                        const gbGroup = document.createElement('optgroup');
-                        gbGroup.label = '🇬🇧 English (GB)';
-                        catalog.en_GB.forEach(voiceInfo => {
-                            const opt = document.createElement('option');
-                            opt.value = voiceInfo.name;
-                            const displayName = formatVoiceName(voiceInfo.name);
-                            opt.textContent = voiceInfo.downloaded 
-                                ? `${displayName}` 
-                                : `${displayName} ⬇️`;
-                            if (voiceInfo.name === data.selected_voice) opt.selected = true;
-                            gbGroup.appendChild(opt);
-                        });
-                        voiceSelect.appendChild(gbGroup);
-                    }
+                    // Sort languages alphabetically by label
+                    const sortedLanguages = Object.keys(catalog).sort((a, b) => {
+                        const labelA = languageLabels[a] || a;
+                        const labelB = languageLabels[b] || b;
+                        return labelA.localeCompare(labelB);
+                    });
+                    
+                    // Add voice groups for each language
+                    sortedLanguages.forEach(langCode => {
+                        const voices = catalog[langCode];
+                        if (voices && voices.length > 0) {
+                            const group = document.createElement('optgroup');
+                            group.label = languageLabels[langCode] || langCode;
+                            
+                            voices.forEach(voiceInfo => {
+                                const opt = document.createElement('option');
+                                opt.value = voiceInfo.name;
+                                const displayName = formatVoiceName(voiceInfo.name);
+                                opt.textContent = voiceInfo.downloaded 
+                                    ? `${displayName}` 
+                                    : `${displayName} ⬇️`;
+                                if (voiceInfo.name === data.selected_voice) opt.selected = true;
+                                group.appendChild(opt);
+                            });
+                            
+                            voiceSelect.appendChild(group);
+                        }
+                    });
                     
                     // Update status display
                     $('voice-status').style.display = 'block';
@@ -1713,7 +1758,8 @@
                     if (data.message && data.message.includes('not found')) {
                         const shouldDownload = confirm('Voice not downloaded. Download it now?');
                         if (shouldDownload) {
-                            $('download-voice-btn').click();
+                            // Download and then set the voice
+                            await downloadAndSetVoice(voiceName, true);
                         }
                     } else {
                         alert('❌ Error: ' + (data.message || 'Unknown error'));
@@ -1725,14 +1771,8 @@
             }
         };
         
-        // Download voice
-        $('download-voice-btn').onclick = async () => {
-            const voiceName = $('tts-voice-select').value;
-            if (!voiceName) {
-                alert('❌ Please select a voice to download');
-                return;
-            }
-            
+        // Download voice helper function
+        async function downloadAndSetVoice(voiceName, autoSet = false) {
             const progressDiv = $('voice-download-progress');
             const progressBar = $('voice-download-bar');
             const progressName = $('voice-download-name');
@@ -1755,8 +1795,26 @@
                     await new Promise(r => setTimeout(r, 500));  // Brief delay to show completion
                     progressDiv.style.display = 'none';
                     await loadAvailableVoices();
-                    alert('✅ ' + data.message);
-                    logger.info('Voice downloaded:', voiceName);
+                    
+                    // Auto-set voice if requested
+                    if (autoSet) {
+                        const setRes = await fetch('/api/voice/voices/set', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ voice: voiceName })
+                        });
+                        const setData = await setRes.json();
+                        if (setData.status === 'ok') {
+                            await loadAvailableVoices();
+                            alert('✅ Downloaded and set voice to: ' + voiceName);
+                            logger.info('Voice downloaded and set to:', voiceName);
+                        } else {
+                            alert('✅ Downloaded but failed to set: ' + voiceName);
+                        }
+                    } else {
+                        alert('✅ ' + data.message);
+                        logger.info('Voice downloaded:', voiceName);
+                    }
                 } else {
                     progressDiv.style.display = 'none';
                     alert('❌ Error: ' + (data.message || 'Unknown error'));
@@ -1766,6 +1824,16 @@
                 console.error('Error downloading voice:', e);
                 alert('❌ Error downloading voice: ' + e.message);
             }
+        }
+        
+        // Download voice button handler
+        $('download-voice-btn').onclick = async () => {
+            const voiceName = $('tts-voice-select').value;
+            if (!voiceName) {
+                alert('❌ Please select a voice to download');
+                return;
+            }
+            await downloadAndSetVoice(voiceName, false);
         };
         
         // Load voices when voice settings tab is opened
