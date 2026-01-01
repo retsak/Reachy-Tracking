@@ -164,6 +164,90 @@ TRAINING_TEXTS = [
     "Rural juror jury juridical judicious judicial jurisdiction.",
     "Statistics show sixths should suggest systematic solutions.",
     "Worcestershire sauce splashed across the workshop.",
+    
+    # Varied pacing and rhythm
+    "One, two, three, four, five, six, seven, eight, nine, ten.",
+    "Slowly, carefully, methodically, we proceed through the process.",
+    "Quickly! Rapidly! Fast! Faster! Fastest! Go, go, go!",
+    "Tick tock, tick tock, the clock keeps on ticking time away.",
+    "Dancing, singing, laughing, playing throughout the entire day.",
+    
+    # Narrative and storytelling
+    "Once upon a time, in a land far away, there lived a brave knight.",
+    "The adventure began when we discovered an ancient, mysterious map.",
+    "She walked through the forest wondering what adventure awaited her.",
+    "As the sun set, golden light painted the sky in brilliant colors.",
+    "The ending was unexpected but ultimately satisfying and complete.",
+    
+    # Formal and professional language
+    "I hereby solemnly declare my intention to proceed with the proposal.",
+    "Furthermore, the evidence suggests a strong correlation exists.",
+    "In conclusion, we recommend immediate implementation of these changes.",
+    "The aforementioned factors contribute significantly to our findings.",
+    "Consequently, stakeholders must evaluate all available options carefully.",
+    
+    # Casual and conversational
+    "Hey, how's it going? Doing well, thanks for asking!",
+    "So like, I was thinking we could totally do something fun.",
+    "Yeah, that sounds good to me, I'm definitely on board with that.",
+    "Honestly, I've got no clue what she's talking about anymore.",
+    "Dude, that's like, literally the craziest thing I've ever heard!",
+    
+    # Descriptive and sensory language
+    "The crisp autumn air smells of cinnamon, apples, and fallen leaves.",
+    "Soft velvet fabric feels luxurious and smooth against bare skin.",
+    "The bitter taste of dark chocolate melts slowly on the tongue.",
+    "Bright, vibrant colors danced across the canvas like living fire.",
+    "The soothing sound of ocean waves creates peaceful, rhythmic music.",
+    
+    # Exclamatory and emphatic
+    "Absolutely fantastic! I couldn't have asked for better results!",
+    "Seriously?! That's unbelievable! I can't believe it's true!",
+    "Oh my goodness! This is incredible! I'm so excited!",
+    "What?! No way! That's completely impossible to imagine!",
+    "Wow! Amazing! Outstanding! Brilliant! Perfect! Excellent!",
+    
+    # Questions with various intonations
+    "Would you mind helping me with this difficult task?",
+    "Don't you think we should reconsider our previous decision?",
+    "How exactly would you suggest we approach this problem?",
+    "Why on earth would anyone believe such an outlandish claim?",
+    "Isn't it obvious that we need to change our strategy now?",
+    
+    # Abstract and philosophical
+    "Time flows like an endless river through the landscape of existence.",
+    "Beauty exists not in perfection but in the flaws we embrace.",
+    "Knowledge is the light that dispels the darkness of ignorance.",
+    "Change is the only constant in this ever-evolving universe.",
+    "Truth can be elusive, hiding beneath layers of perception and belief.",
+    
+    # Scientific and technical terminology
+    "Photosynthesis converts solar radiation into chemical energy efficiently.",
+    "The quantum mechanics principle demonstrates wave-particle duality conclusively.",
+    "Isotopes possess different numbers of neutrons within the nucleus.",
+    "Thermodynamics establishes fundamental principles governing energy transfer.",
+    "Crystalline structures exhibit periodic patterns at the molecular level.",
+    
+    # Poetic and lyrical
+    "In moonlight dancing, shadows play their timeless waltz of wonder.",
+    "Stars like diamonds scattered across velvet canvas of the night.",
+    "Morning dew glistens as nature awakens from her peaceful slumber.",
+    "Hearts beat in rhythm with the pulse of the eternal universe.",
+    "Dreams drift like clouds across the vastness of sleeping minds.",
+    
+    # Action-oriented and dynamic
+    "Run faster! Jump higher! Reach further than ever before!",
+    "Attack the problem from multiple angles simultaneously and boldly.",
+    "Create solutions that transform challenges into opportunities for growth.",
+    "Build momentum through consistent action and unwavering determination.",
+    "Accelerate progress by removing obstacles and streamlining processes.",
+    
+    # Contrasts and comparisons
+    "Light and shadow exist in constant eternal tension and balance.",
+    "Silence can be louder than words spoken with passionate intensity.",
+    "Beginnings often feel like endings viewed from a different perspective.",
+    "Simple solutions can sometimes be more effective than complex ones.",
+    "Strong and weak are relative terms depending on context and situations.",
 ]
 
 def load_voice_assistant() -> VoiceAssistant:
@@ -302,8 +386,20 @@ def generate_training_samples(
     logger.info(f"Output directory: {output_dir}")
     
     successful = 0
+    skipped = 0
     for idx, text in enumerate(texts, 1):
         output_file = output_dir / f"sample_{idx:03d}.wav"
+        
+        # Check if sample already exists
+        if output_file.exists():
+            logger.info(f"[{idx}/{len(texts)}] Skipping existing sample: {text[:60]}...")
+            skipped += 1
+            metadata["samples"].append({
+                "file": output_file.name,
+                "text": text,
+                "index": idx
+            })
+            continue
         
         logger.info(f"[{idx}/{len(texts)}] Generating: {text[:60]}...")
         
@@ -323,6 +419,8 @@ def generate_training_samples(
     
     logger.info(f"\nGeneration complete!")
     logger.info(f"Successfully generated: {successful}/{len(texts)} samples")
+    if skipped > 0:
+        logger.info(f"Skipped existing: {skipped}/{len(texts)} samples")
     logger.info(f"Metadata saved to: {metadata_file}")
     
     return successful
