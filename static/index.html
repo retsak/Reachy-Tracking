@@ -1689,11 +1689,21 @@
                         'zh_CN': '🇨🇳 Chinese (Mandarin)',
                     };
                     
-                    // Sort languages alphabetically by label
+                    // Sort languages by country name, then alphabetically
                     const sortedLanguages = Object.keys(catalog).sort((a, b) => {
                         const labelA = languageLabels[a] || a;
                         const labelB = languageLabels[b] || b;
-                        return labelA.localeCompare(labelB);
+                        
+                        // Extract country name (after the flag emoji and space)
+                        const countryA = labelA.replace(/^[\p{Emoji}]+\s*/, '').split('(')[0].trim();
+                        const countryB = labelB.replace(/^[\p{Emoji}]+\s*/, '').split('(')[0].trim();
+                        
+                        // First sort by country name
+                        const countryCompare = countryA.localeCompare(countryB);
+                        if (countryCompare !== 0) return countryCompare;
+                        
+                        // Then sort by language code within same country
+                        return a.localeCompare(b);
                     });
                     
                     // Add voice groups for each language

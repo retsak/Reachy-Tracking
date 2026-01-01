@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # Comprehensive list of available Piper voices from Hugging Face
 # https://huggingface.co/rhasspy/piper-voices
 # Validated against official voices.json (148 voices across 46 languages)
+# Sorted alphabetically by country name, then by language code
 ALL_VOICES = {
     "ar_JO": [
         "ar_JO-kareem-low",
@@ -31,18 +32,33 @@ ALL_VOICES = {
     "bg_BG": [
         "bg_BG-dimitar-medium",
     ],
+    "nl_BE": [
+        "nl_BE-nathalie-medium",
+        "nl_BE-nathalie-x_low",
+        "nl_BE-rdh-medium",
+        "nl_BE-rdh-x_low",
+    ],
+    "pt_BR": [
+        "pt_BR-cadu-medium",
+        "pt_BR-edresson-low",
+        "pt_BR-faber-medium",
+        "pt_BR-jeff-medium",
+    ],
     "ca_ES": [
         "ca_ES-upc_ona-medium",
         "ca_ES-upc_ona-x_low",
         "ca_ES-upc_pau-x_low",
     ],
+    "zh_CN": [
+        "zh_CN-huayan-medium",
+        "zh_CN-huayan-x_low",
+    ],
+    "sw_CD": [
+        "sw_CD-lanfrica-medium",
+    ],
     "cs_CZ": [
         "cs_CZ-jirka-low",
         "cs_CZ-jirka-medium",
-    ],
-    "cy_GB": [
-        "cy_GB-bu_tts-medium",
-        "cy_GB-gwryw_gogleddol-medium",
     ],
     "da_DK": [
         "da_DK-talesyntese-medium",
@@ -59,10 +75,6 @@ ALL_VOICES = {
         "de_DE-thorsten-medium",
         "de_DE-thorsten_emotional-medium",
     ],
-    "el_GR": [
-        "el_GR-rapunzelina-low",
-        "el_GR-rapunzelina-medium",
-    ],
     "en_GB": [
         "en_GB-alan-low",
         "en_GB-alan-medium",
@@ -75,6 +87,10 @@ ALL_VOICES = {
         "en_GB-semaine-medium",
         "en_GB-southern_english_female-low",
         "en_GB-vctk-medium",
+    ],
+    "cy_GB": [
+        "cy_GB-bu_tts-medium",
+        "cy_GB-gwryw_gogleddol-medium",
     ],
     "en_US": [
         "en_US-amy-low",
@@ -118,13 +134,6 @@ ALL_VOICES = {
         "es_MX-ald-medium",
         "es_MX-claude-high",
     ],
-    "fa_IR": [
-        "fa_IR-amir-medium",
-        "fa_IR-ganji-medium",
-        "fa_IR-ganji_adabi-medium",
-        "fa_IR-gyro-medium",
-        "fa_IR-reza_ibrahim-medium",
-    ],
     "fi_FI": [
         "fi_FI-harri-low",
         "fi_FI-harri-medium",
@@ -138,21 +147,33 @@ ALL_VOICES = {
         "fr_FR-tom-medium",
         "fr_FR-upmc-medium",
     ],
-    "he_IL": [
-        "he_IL-motek-medium",
+    "ka_GE": [
+        "ka_GE-natia-medium",
+    ],
+    "el_GR": [
+        "el_GR-rapunzelina-low",
+        "el_GR-rapunzelina-medium",
     ],
     "hi_IN": [
         "hi_IN-pratham-medium",
         "hi_IN-priyamvada-medium",
         "hi_IN-rohan-medium",
     ],
-    "hu_HU": [
-        "hu_HU-anna-medium",
-        "hu_HU-berta-medium",
-        "hu_HU-imre-medium",
+    "ml_IN": [
+        "ml_IN-arjun-medium",
+        "ml_IN-meera-medium",
     ],
-    "id_ID": [
-        "id_ID-news_tts-medium",
+    "te_IN": [
+        "te_IN-maya-medium",
+        "te_IN-padmavathi-medium",
+        "te_IN-venkatesh-medium",
+    ],
+    "it_IT": [
+        "it_IT-paola-medium",
+        "it_IT-riccardo-x_low",
+    ],
+    "he_IL": [
+        "he_IL-motek-medium",
     ],
     "is_IS": [
         "is_IS-bui-medium",
@@ -160,38 +181,30 @@ ALL_VOICES = {
         "is_IS-steinn-medium",
         "is_IS-ugla-medium",
     ],
-    "it_IT": [
-        "it_IT-paola-medium",
-        "it_IT-riccardo-x_low",
+    "id_ID": [
+        "id_ID-news_tts-medium",
     ],
-    "ka_GE": [
-        "ka_GE-natia-medium",
+    "fa_IR": [
+        "fa_IR-amir-medium",
+        "fa_IR-ganji-medium",
+        "fa_IR-ganji_adabi-medium",
+        "fa_IR-gyro-medium",
+        "fa_IR-reza_ibrahim-medium",
     ],
     "kk_KZ": [
         "kk_KZ-iseke-x_low",
         "kk_KZ-issai-high",
         "kk_KZ-raya-x_low",
     ],
-    "lb_LU": [
-        "lb_LU-marylux-medium",
-    ],
     "lv_LV": [
         "lv_LV-aivars-medium",
     ],
-    "ml_IN": [
-        "ml_IN-arjun-medium",
-        "ml_IN-meera-medium",
+    "lb_LU": [
+        "lb_LU-marylux-medium",
     ],
-    "ne_NP": [
-        "ne_NP-chitwan-medium",
-        "ne_NP-google-medium",
-        "ne_NP-google-x_low",
-    ],
-    "nl_BE": [
-        "nl_BE-nathalie-medium",
-        "nl_BE-nathalie-x_low",
-        "nl_BE-rdh-medium",
-        "nl_BE-rdh-x_low",
+    "es_MX": [
+        "es_MX-ald-medium",
+        "es_MX-claude-high",
     ],
     "nl_NL": [
         "nl_NL-mls-medium",
@@ -203,17 +216,16 @@ ALL_VOICES = {
     "no_NO": [
         "no_NO-talesyntese-medium",
     ],
+    "ne_NP": [
+        "ne_NP-chitwan-medium",
+        "ne_NP-google-medium",
+        "ne_NP-google-x_low",
+    ],
     "pl_PL": [
         "pl_PL-darkman-medium",
         "pl_PL-gosia-medium",
         "pl_PL-mc_speech-medium",
         "pl_PL-mls_6892-low",
-    ],
-    "pt_BR": [
-        "pt_BR-cadu-medium",
-        "pt_BR-edresson-low",
-        "pt_BR-faber-medium",
-        "pt_BR-jeff-medium",
     ],
     "pt_PT": [
         "pt_PT-tugão-medium",
@@ -227,26 +239,18 @@ ALL_VOICES = {
         "ru_RU-irina-medium",
         "ru_RU-ruslan-medium",
     ],
+    "sr_RS": [
+        "sr_RS-serbski_institut-medium",
+    ],
     "sk_SK": [
         "sk_SK-lili-medium",
     ],
     "sl_SI": [
         "sl_SI-artur-medium",
     ],
-    "sr_RS": [
-        "sr_RS-serbski_institut-medium",
-    ],
     "sv_SE": [
         "sv_SE-lisa-medium",
         "sv_SE-nst-medium",
-    ],
-    "sw_CD": [
-        "sw_CD-lanfrica-medium",
-    ],
-    "te_IN": [
-        "te_IN-maya-medium",
-        "te_IN-padmavathi-medium",
-        "te_IN-venkatesh-medium",
     ],
     "tr_TR": [
         "tr_TR-dfki-medium",
@@ -259,10 +263,6 @@ ALL_VOICES = {
         "vi_VN-25hours_single-low",
         "vi_VN-vais1000-medium",
         "vi_VN-vivos-x_low",
-    ],
-    "zh_CN": [
-        "zh_CN-huayan-medium",
-        "zh_CN-huayan-x_low",
     ],
 }
 
