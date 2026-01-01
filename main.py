@@ -1264,6 +1264,100 @@ async def get_voice_level():
         return {"rms": 0.0, "db": -120.0}
 
 
+@app.get("/api/voice/voices")
+async def get_available_voices():
+    """Get list of available Piper TTS voices"""
+    global voice_assistant
+    
+    try:
+        if voice_assistant is None:
+            voice_assistant = get_assistant(robot)
+            _apply_wake_word_settings(voice_assistant)
+        
+        # Get comprehensive catalog with download status
+        catalog = voice_assistant.get_all_voices_catalog()
+        available = voice_assistant.get_available_voices()
+        
+        return {
+            "status": "ok",
+            "available_voices": available,
+            "voice_catalog": catalog,
+            "selected_voice": voice_assistant.selected_voice
+        }
+    except Exception as e:
+        logger.error(f"Error getting voices: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/voice/voices/set")
+async def set_voice(request_data: dict):
+    """Set the TTS voice to use"""
+    global voice_assistant
+    
+    try:
+        voice_name = request_data.get("voice")
+        if not voice_name:
+            return {"status": "error", "message": "voice parameter required"}
+        
+        if voice_assistant is None:
+            voice_assistant = get_assistant(robot)
+            _apply_wake_word_settings(voice_assistant)
+        
+        success = voice_assistant.set_voice(voice_name)
+        if success:
+            return {
+                "status": "ok",
+                "message": f"Voice set to: {voice_name}",
+                "selected_voice": voice_assistant.selected_voice
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Voice not found: {voice_name}",
+                "available_voices": voice_assistant.get_available_voices()
+            }
+    except Exception as e:
+        logger.error(f"Voice selection error: {e}", exc_info=True)
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/voice/voices/download")
+async def download_voice(request_data: dict):
+    """Download a Piper voice from Hugging Face"""
+    global voice_assistant
+    
+    try:
+        voice_name = request_data.get("voice")
+        if not voice_name:
+            return {"status": "error", "message": "voice parameter required"}
+        
+        if voice_assistant is None:
+            voice_assistant = get_assistant(robot)
+            _apply_wake_word_settings(voice_assistant)
+        
+        logger.info(f"Starting download for voice: {voice_name}")
+        success, message = voice_assistant.download_voice(voice_name)
+        
+        if success:
+            # Refresh available voices list
+            voice_assistant._load_available_voices()
+            return {
+                "status": "ok",
+                "message": message,
+                "voice": voice_name,
+                "available_voices": voice_assistant.get_available_voices()
+            }
+        else:
+            return {
+                "status": "error",
+                "message": message,
+                "voice": voice_name
+            }
+    except Exception as e:
+        logger.error(f"Voice download error: {e}", exc_info=True)
+        return {"status": "error", "message": f"Download failed: {str(e)}"}
+
+
 @app.post("/api/voice/debug")
 async def set_debug_mode(request_data: dict):
     """Enable/disable debug audio logging"""

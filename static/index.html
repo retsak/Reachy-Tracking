@@ -448,6 +448,34 @@
                 </div>
 
                 <div class="settings-group">
+                    <h4>🎤 TTS Voice Selection</h4>
+                    <div class="settings-row">
+                        <label>Voice:</label>
+                        <select id="tts-voice-select" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); color:var(--text);">
+                            <option value="">🔄 Loading voices...</option>
+                        </select>
+                        <p class="info-text" style="font-size:11px; margin-top:4px;">Select which voice the robot uses for text-to-speech. Currently supports English (en_US) and British English (en_GB).</p>
+                    </div>
+                    
+                    <div class="settings-row">
+                        <button id="save-voice-btn" class="action-btn" style="background:var(--success); color:#000;">💾 Set Voice</button>
+                        <button id="download-voice-btn" class="action-btn" style="background:var(--info); color:#000; margin-left:8px;">⬇️ Download Voice</button>
+                    </div>
+                    
+                    <div id="voice-download-progress" style="margin-top:8px; display:none; padding:8px; background:var(--surface); border-radius:4px;">
+                        <div style="font-size:12px; margin-bottom:4px;">Downloading: <span id="voice-download-name"></span></div>
+                        <div style="width:100%; height:6px; background:var(--border); border-radius:3px; overflow:hidden;">
+                            <div id="voice-download-bar" style="width:0%; height:100%; background:var(--success); transition:width 0.2s;"></div>
+                        </div>
+                        <div style="font-size:10px; margin-top:4px; color:var(--muted);">Please wait...</div>
+                    </div>
+                    
+                    <div id="voice-status" style="margin-top:10px; padding:8px; border-radius:4px; background:var(--surface); font-size:12px; display:none;">
+                        <strong>Current Voice:</strong> <span id="voice-status-text">Loading...</span>
+                    </div>
+                </div>
+
+                <div class="settings-group">
                     <h3>Debug Mode</h3>
                     <div class="settings-row">
                         <label style="display:flex; align-items:center; gap:8px;">
@@ -575,6 +603,9 @@
                     vlog('[SETTINGS] Verbose logging toggled to:', verboseLogging);
                 });
             }
+            
+            // Load voice settings on page load
+            loadAvailableVoices();
         });
 
         // ══════════════════════════════════════
@@ -1587,6 +1618,161 @@
         
         // Load wake word settings when voice tab is opened
         document.querySelector('[data-tab="voice-tab"]').addEventListener('click', loadWakeWordSettings);
+        
+        // Load and manage TTS voices
+        async function loadAvailableVoices() {
+            try {
+                const res = await fetch('/api/voice/voices');
+                const data = await res.json();
+                
+                if (data.status === 'ok') {
+                    const voiceSelect = $('tts-voice-select');
+                    voiceSelect.innerHTML = '';
+                    
+                    // Use voice catalog with download status
+                    const catalog = data.voice_catalog || {};
+                    
+                    // Helper to format voice name for display
+                    const formatVoiceName = (voice) => {
+                        // Format: en_US-name-variant -> Name Variant
+                        const parts = voice.split('-').slice(1);
+                        return parts.map(p => p.replace(/\b\w/g, l => l.toUpperCase())).join(' ');
+                    };
+                    
+                    // Add US English voices
+                    if (catalog.en_US && catalog.en_US.length > 0) {
+                        const usGroup = document.createElement('optgroup');
+                        usGroup.label = '🇺🇸 English (US)';
+                        catalog.en_US.forEach(voiceInfo => {
+                            const opt = document.createElement('option');
+                            opt.value = voiceInfo.name;
+                            const displayName = formatVoiceName(voiceInfo.name);
+                            opt.textContent = voiceInfo.downloaded 
+                                ? `${displayName}` 
+                                : `${displayName} ⬇️`;
+                            if (voiceInfo.name === data.selected_voice) opt.selected = true;
+                            usGroup.appendChild(opt);
+                        });
+                        voiceSelect.appendChild(usGroup);
+                    }
+                    
+                    // Add GB English voices
+                    if (catalog.en_GB && catalog.en_GB.length > 0) {
+                        const gbGroup = document.createElement('optgroup');
+                        gbGroup.label = '🇬🇧 English (GB)';
+                        catalog.en_GB.forEach(voiceInfo => {
+                            const opt = document.createElement('option');
+                            opt.value = voiceInfo.name;
+                            const displayName = formatVoiceName(voiceInfo.name);
+                            opt.textContent = voiceInfo.downloaded 
+                                ? `${displayName}` 
+                                : `${displayName} ⬇️`;
+                            if (voiceInfo.name === data.selected_voice) opt.selected = true;
+                            gbGroup.appendChild(opt);
+                        });
+                        voiceSelect.appendChild(gbGroup);
+                    }
+                    
+                    // Update status display
+                    $('voice-status').style.display = 'block';
+                    $('voice-status-text').textContent = data.selected_voice || 'None';
+                    
+                    logger.info('Voice catalog loaded:', catalog);
+                } else {
+                    console.error('Error loading voices:', data.message);
+                    $('tts-voice-select').innerHTML = '<option>Error loading voices</option>';
+                }
+            } catch (e) {
+                console.error('Error loading available voices:', e);
+                $('tts-voice-select').innerHTML = '<option>Error loading voices</option>';
+            }
+        }
+        
+        // Set voice
+        $('save-voice-btn').onclick = async () => {
+            const voiceName = $('tts-voice-select').value;
+            if (!voiceName) {
+                alert('❌ Please select a voice');
+                return;
+            }
+            
+            try {
+                const res = await fetch('/api/voice/voices/set', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ voice: voiceName })
+                });
+                
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    await loadAvailableVoices();
+                    alert('✅ Voice changed to: ' + voiceName);
+                    logger.info('Voice set to:', voiceName);
+                } else {
+                    // Voice might not be downloaded yet
+                    if (data.message && data.message.includes('not found')) {
+                        const shouldDownload = confirm('Voice not downloaded. Download it now?');
+                        if (shouldDownload) {
+                            $('download-voice-btn').click();
+                        }
+                    } else {
+                        alert('❌ Error: ' + (data.message || 'Unknown error'));
+                    }
+                }
+            } catch (e) {
+                console.error('Error setting voice:', e);
+                alert('❌ Error setting voice');
+            }
+        };
+        
+        // Download voice
+        $('download-voice-btn').onclick = async () => {
+            const voiceName = $('tts-voice-select').value;
+            if (!voiceName) {
+                alert('❌ Please select a voice to download');
+                return;
+            }
+            
+            const progressDiv = $('voice-download-progress');
+            const progressBar = $('voice-download-bar');
+            const progressName = $('voice-download-name');
+            
+            progressDiv.style.display = 'block';
+            progressBar.style.width = '0%';
+            progressName.textContent = voiceName;
+            
+            try {
+                const res = await fetch('/api/voice/voices/download', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ voice: voiceName })
+                });
+                
+                const data = await res.json();
+                
+                if (data.status === 'ok') {
+                    progressBar.style.width = '100%';
+                    await new Promise(r => setTimeout(r, 500));  // Brief delay to show completion
+                    progressDiv.style.display = 'none';
+                    await loadAvailableVoices();
+                    alert('✅ ' + data.message);
+                    logger.info('Voice downloaded:', voiceName);
+                } else {
+                    progressDiv.style.display = 'none';
+                    alert('❌ Error: ' + (data.message || 'Unknown error'));
+                }
+            } catch (e) {
+                progressDiv.style.display = 'none';
+                console.error('Error downloading voice:', e);
+                alert('❌ Error downloading voice: ' + e.message);
+            }
+        };
+        
+        // Load voices when voice settings tab is opened
+        document.querySelector('[data-tab="voice-tab"]').addEventListener('click', async () => {
+            await loadWakeWordSettings();
+            await loadAvailableVoices();
+        });
         
         // Initial load when page loads (if voice tab is already open)
         loadWakeWordSettings();

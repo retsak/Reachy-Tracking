@@ -8,15 +8,50 @@ import queue
 import time
 import logging
 import re
+import json
+import requests
 import numpy as np
 import soundfile as sf
 import sounddevice as sd
 from scipy import signal
-from typing import Optional, Callable
+from typing import Optional, Callable, Tuple
 from pathlib import Path
 from llm_config import get_llm_config_manager
 
 logger = logging.getLogger(__name__)
+
+# Comprehensive list of available Piper voices from Hugging Face
+# https://huggingface.co/rhasspy/piper-voices
+ALL_VOICES = {
+    "en_US": [
+        "en_US-amy-low",
+        "en_US-amy-medium",
+        "en_US-danny-low",
+        "en_US-joe-medium",
+        "en_US-kathleen-low",
+        "en_US-kristin-medium",
+        "en_US-kusal-medium",
+        "en_US-l2arctic-medium",
+        "en_US-lessac-high",
+        "en_US-lessac-low",
+        "en_US-lessac-medium",
+        "en_US-libritts-high",
+        "en_US-libritts_r-medium",
+        "en_US-ryan-high",
+        "en_US-ryan-low",
+        "en_US-ryan-medium",
+    ],
+    "en_GB": [
+        "en_GB-alan-low",
+        "en_GB-alan-medium",
+        "en_GB-alba-medium",
+        "en_GB-aru-medium",
+        "en_GB-northern_english_male-medium",
+        "en_GB-semaine-medium",
+        "en_GB-southern_english_female-low",
+        "en_GB-southern_english_female-medium",
+    ]
+}
 
 # Global state
 _assistant_instance = None
@@ -62,6 +97,7 @@ class VoiceAssistant:
         self._llm_tokenizer = None
         self._piper_model = None
         self._piper_model_path = None
+        self._piper_voice_name = None  # Track selected voice name
         self._wake_word_model = None
         self.model_info = {"whisper": None, "llm": None, "piper": None, "wake_word": None}
         self.init_error = None
@@ -78,6 +114,11 @@ class VoiceAssistant:
         self._wake_word_detected_time = None
         self._wake_word_buffer_size = 1280  # 80ms at 16kHz for wake word detection
         self._manual_listen_requested = False  # Flag for manual listening trigger
+        
+        # TTS voice selection
+        self.selected_voice = "en_US-amy-medium"  # Default voice
+        self.available_voices = []  # Will be populated on init
+        self._load_available_voices()
         
         # Debug mode
         self.debug_audio_enabled = False  # Save debug audio files
@@ -416,23 +457,225 @@ Rules:
                 self.wake_word_enabled = False
         return self._wake_word_model
     
+    def _load_available_voices(self):
+        """Enumerate all available Piper voices from models/piper directory.
+        
+        Voice files are stored as: en_US-amy-medium.onnx and en_US-amy-medium.onnx.json
+        We extract the voice name from the .onnx files.
+        """
+        self.available_voices = []
+        try:
+            onnx_files = sorted(self.piper_dir.glob("*.onnx"))
+            for onnx_file in onnx_files:
+                voice_name = onnx_file.stem  # Remove .onnx extension
+                json_file = self.piper_dir / f"{voice_name}.onnx.json"
+                if json_file.exists():
+                    self.available_voices.append(voice_name)
+            
+            if self.available_voices:
+                logger.info(f"📋 Found {len(self.available_voices)} Piper voices: {self.available_voices}")
+                # Set selected voice to first available if default not found
+                if self.selected_voice not in self.available_voices:
+                    self.selected_voice = self.available_voices[0]
+                    logger.info(f"Default voice not found, using: {self.selected_voice}")
+            else:
+                logger.warning("No Piper voices found in models/piper directory")
+        except Exception as e:
+            logger.error(f"Error enumerating Piper voices: {e}")
+    
+    def get_available_voices(self) -> list:
+        """Return list of available Piper voices.
+        
+        Returns:
+            List of voice names like ['en_US-amy-medium', 'en_GB-alan-medium', ...]
+        """
+        if not self.available_voices:
+            self._load_available_voices()
+        return self.available_voices
+    
+    def get_all_voices_catalog(self) -> dict:
+        """Return comprehensive catalog of all voices with download status.
+        
+        Returns:
+            Dict with structure:
+            {
+                "en_US": [
+                    {"name": "en_US-amy-medium", "downloaded": True},
+                    {"name": "en_US-joe-medium", "downloaded": False},
+                    ...
+                ],
+                "en_GB": [...]
+            }
+        """
+        # Refresh local voices
+        self._load_available_voices()
+        
+        catalog = {}
+        for region, voices in ALL_VOICES.items():
+            catalog[region] = [
+                {
+                    "name": voice,
+                    "downloaded": voice in self.available_voices
+                }
+                for voice in voices
+            ]
+        
+        return catalog
+    
+    def download_voice(self, voice_name: str) -> Tuple[bool, str]:
+        """Download a Piper voice from Hugging Face if not already present.
+        
+        Args:
+            voice_name: Voice name like 'en_US-amy-medium'
+            
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        # Check if voice already exists
+        onnx_file = self.piper_dir / f"{voice_name}.onnx"
+        json_file = self.piper_dir / f"{voice_name}.onnx.json"
+        
+        if onnx_file.exists() and json_file.exists():
+            logger.info(f"Voice {voice_name} already downloaded")
+            return True, f"Voice {voice_name} is already downloaded"
+        
+        try:
+            # Parse voice name to determine category
+            # Format: language_region-voice_name-quality, e.g., en_US-amy-medium
+            parts = voice_name.split('-')
+            if len(parts) < 3:
+                return False, f"Invalid voice name format: {voice_name}. Expected format: en_US-name-quality"
+            
+            lang_region = parts[0]  # e.g., en_US
+            voice_name_part = parts[1]  # e.g., amy
+            quality = parts[2]  # e.g., medium (or could be low, high)
+            
+            # Determine language and region
+            # Parse language_region format: en_US, en_GB, etc.
+            if '_' in lang_region:
+                lang_code = lang_region.split('_')[0]  # e.g., 'en'
+                # URL structure: en/en_US/voice_name/quality/en_US-voice_name-quality.onnx
+                url_path = f"{lang_code}/{lang_region}/{voice_name_part}/{quality}"
+            else:
+                # Fallback for unexpected formats
+                return False, f"Unsupported voice format: {voice_name}"
+            
+            # Base URL for Piper voices on Hugging Face
+            # Files are stored in: en/en_US/amy/medium/en_US-amy-medium.onnx
+            base_url = f"https://huggingface.co/rhasspy/piper-voices/resolve/main/{url_path}"
+            
+            logger.info(f"Downloading voice {voice_name} from Hugging Face...")
+            
+            # Download .onnx file
+            onnx_url = f"{base_url}/{voice_name}.onnx"
+            logger.info(f"Downloading: {onnx_url}")
+            response = requests.get(onnx_url, stream=True, timeout=60)
+            if response.status_code != 200:
+                return False, f"Failed to download {voice_name}.onnx (HTTP {response.status_code})"
+            
+            # Write ONNX file
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
+            with open(onnx_file, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            percent = (downloaded / total_size) * 100
+                            logger.debug(f"Downloaded {percent:.1f}% of {voice_name}.onnx")
+            
+            logger.info(f"✓ Downloaded {voice_name}.onnx ({downloaded} bytes)")
+            
+            # Download .onnx.json file
+            json_url = f"{base_url}/{voice_name}.onnx.json"
+            logger.info(f"Downloading: {json_url}")
+            response = requests.get(json_url, timeout=30)
+            if response.status_code != 200:
+                # Remove incomplete ONNX file
+                onnx_file.unlink()
+                return False, f"Failed to download {voice_name}.onnx.json (HTTP {response.status_code})"
+            
+            with open(json_file, 'w', encoding='utf-8') as f:
+                f.write(response.text)
+            
+            logger.info(f"✓ Downloaded {voice_name}.onnx.json")
+            logger.info(f"✓ Successfully downloaded voice: {voice_name}")
+            
+            return True, f"Successfully downloaded {voice_name}"
+            
+        except requests.exceptions.Timeout:
+            return False, f"Download timeout for {voice_name}. Please check your internet connection."
+        except requests.exceptions.RequestException as e:
+            return False, f"Download failed for {voice_name}: {str(e)}"
+        except Exception as e:
+            logger.error(f"Error downloading voice {voice_name}: {e}", exc_info=True)
+            return False, f"Error downloading {voice_name}: {str(e)}"
+    
+    def set_voice(self, voice_name: str) -> bool:
+        """Set the TTS voice to use.
+        
+        Args:
+            voice_name: Voice name like 'en_US-amy-medium'
+            
+        Returns:
+            True if voice was set successfully, False otherwise
+        """
+        if voice_name not in self.available_voices:
+            self._load_available_voices()  # Refresh list
+        
+        if voice_name in self.available_voices:
+            self.selected_voice = voice_name
+            # Reset piper model to force reload with new voice
+            self._piper_model = None
+            self._piper_model_path = None
+            logger.info(f"✓ Voice switched to: {voice_name}")
+            return True
+        else:
+            logger.warning(f"Voice not found: {voice_name}")
+            return False
+    
     def _load_piper(self):
-        """Load Piper TTS model"""
+        """Load Piper TTS model for the selected voice."""
         if self._piper_model is None:
             try:
                 logger.info("Configuring Piper TTS from local models directory...")
-                # Find local .onnx voice model under models/piper
-                onnx_models = list(self.piper_dir.glob("*.onnx"))
-                if onnx_models:
-                    self._piper_model_path = str(onnx_models[0])
-                    self._piper_model = "local"
-                    self.model_info["piper"] = {"path": self._piper_model_path}
-                    logger.info(f"Piper TTS model found: {self._piper_model_path}")
-                else:
-                    self._piper_model = None
-                    self._piper_model_path = None
-                    self.model_info["piper"] = {"path": None}
-                    logger.warning("No Piper .onnx model found under models/piper. TTS will be disabled.")
+                # Get available voices first
+                if not self.available_voices:
+                    self._load_available_voices()
+                
+                # Look for the selected voice
+                if self.selected_voice in self.available_voices:
+                    voice_onnx = self.piper_dir / f"{self.selected_voice}.onnx"
+                    if voice_onnx.exists():
+                        self._piper_model_path = str(voice_onnx)
+                        self._piper_model = "local"
+                        self.model_info["piper"] = {
+                            "path": self._piper_model_path,
+                            "voice": self.selected_voice
+                        }
+                        logger.info(f"Piper TTS model found: {self._piper_model_path} (voice: {self.selected_voice})")
+                        return self._piper_model
+                
+                # Fallback: find first available voice
+                if self.available_voices:
+                    voice_onnx = self.piper_dir / f"{self.available_voices[0]}.onnx"
+                    if voice_onnx.exists():
+                        self.selected_voice = self.available_voices[0]
+                        self._piper_model_path = str(voice_onnx)
+                        self._piper_model = "local"
+                        self.model_info["piper"] = {
+                            "path": self._piper_model_path,
+                            "voice": self.selected_voice
+                        }
+                        logger.info(f"Piper TTS model found: {self._piper_model_path} (voice: {self.selected_voice})")
+                        return self._piper_model
+                
+                # No voices found
+                self._piper_model = None
+                self._piper_model_path = None
+                self.model_info["piper"] = {"path": None, "voice": None}
+                logger.warning("No Piper .onnx models found under models/piper. TTS will be disabled.")
             except Exception as e:
                 logger.error(f"Failed to configure Piper: {e}", exc_info=True)
                 raise
